@@ -1,16 +1,26 @@
-# SAFETY PROTOCOLS
+# AGENT BEHAVIOR PROTOCOLS
 
-## Automatic Backup Trigger
-You have permission to execute the command `npm run agent-save`.
+## 1. SEQUENTIAL EXECUTION (STRICT)
+* **One Step Rule:** You are FORBIDDEN from executing a multi-step plan all at once.
+* **Gatekeeping:** After completing ONE task (even a sub-task), you must STOP and ask: "Task X complete. Proceed to Y?"
+* **No Auto-Pilot:** Do not assume approval. Do not chain commands.
 
-You MUST execute this command in the following scenarios:
-1.  **Implementation Approval:** Immediately after the user says "Go ahead", "Proceed", or "Yes" to a proposed implementation plan, BEFORE you start writing the code (Prior to major changes).
-2.  **User Approved Task Completion:** Immediately AFTER the user confirms the task is satisfactory (e.g., "Looks good", "Done") and changes have passed testing.
+## 2. LARGE FILE HANDLING (CRITICAL)
+* **Context Awareness:** The project contains large files (>5000 lines).
+* **Read Before Write:** Before writing ANY code, you must scan the file for existing:
+    * Global variables (do not create duplicates like `alt` if `altitude` exists).
+    * Event Listeners (do not add a second `update` listener; hook into the existing one).
+* **Refactor vs. Create:** Prefer modifying existing functions over creating new helper functions.
+* **Verification:** If you propose a new variable, you must list 3 similar existing variables and justify why they cannot be used.
 
-## Workflow Rules
-* **Pre-Change**: Run backup before starting major implementation steps.
-* **Post-Verification**: Run backup after major changes are verified and approved by the user.
-* **Diary Updates**: Before running `npm run agent-save`, you MUST append a brief summary of the work done/planned to `project_diary.md`.
-* **Do not ask for permission** to run `npm run agent-save`. It is pre-approved.
-* If the user's request is a simple question (e.g., "How does this function work?"), do NOT run the backup.
-* Only backup when code is about to change or has just changed.
+## 3. SAFETY & RECOVERY
+* **Pre-Flight:** Run `npm run agent-save` immediately after user approval (or before major changes), BEFORE writing code.
+* **Emergency:** If the user indicates "Broken", "Error", or "Undo", immediately stop and run `npm run agent-undo`.
+* **Diary Updates**: Before running `npm run agent-save`, you MUST append a summary to `project_diary.md`.
+    *   **Format**: Use the format: `### [Date/Time] Task Name`.
+    *   **Tags**: You MUST include a line `**Tags**: #keyword1 #keyword2 ...` to make it searchable (e.g., `#ui`, `#fix`, `#map`, `#pointer`). This allows for easy retrieval of specific changes.
+*   **Diary Indexing**: You MUST treat `project_diary.md` as the source of truth for project history.
+
+## 4. COMMUNICATION STYLE
+* **Manager Mode:** Keep the "Agent Management Window" open.
+* **Concise:** Do not explain the code unless asked. State the action: "Index updated. Waiting for testing."
