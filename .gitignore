@@ -1,0 +1,7 @@
+bad backups/
+local backups/
+node_modules/
+.DS_Store
+*.log
+__pycache__/
+RouteManagerExport backup.lua

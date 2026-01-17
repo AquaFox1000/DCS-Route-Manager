@@ -1,0 +1,234 @@
+﻿Comprehensive Technical Analysis of the DCS World User Interface Environment, Scripting Hooks, and API Architecture
+1. Introduction to the DCS World Scripting Ecosystem
+The architecture of Digital Combat Simulator (DCS) World extends far beyond a typical flight simulation engine; it represents a complex integration of real-time physics calculation, asynchronous network synchronization, and a multi-layered Lua scripting environment designed to facilitate extensibility. For systems integrators, hardware cockpit manufacturers, and server administrators, understanding the precise topology of this environment is a prerequisite for reliable operation. The request to investigate the User Interface (UI) environment—specifically the "Hooks" mechanism—alongside the Lo... API family and file execution strategies like LoDoFile necessitates a deep dive into the engine's distinct Lua states.
+This report provides an exhaustive analysis of these components. It establishes the theoretical and practical boundaries between the GameGUI (Hooks), Export, and Mission environments. It further examines the availability of critical telemetry functions within these isolated states, rigorously details the safety protocols required for multiplayer integrity, and defines the best practices for file Input/Output (I/O) and network communication within a single-threaded simulation loop.
+1.1 The Architecture of Isolated Lua States
+At the core of the DCS scripting engine lies the concept of environment isolation. The simulator does not execute all scripts in a single global namespace. Instead, it instantiates separate Lua Virtual Machines (VMs), each with distinct permissions, lifecycles, and API access privileges. This architecture is intentional, designed to mitigate security risks—such as malicious code execution from downloaded mission files—while simultaneously granting "trusted" local scripts (Hooks/Exports) the privileges necessary to interface with the operating system.1
+The distinction between these states is not merely semantic; it dictates function availability. A function like LoGetSelfData, which extracts high-fidelity telemetry from the physics engine, is natively exposed in the Export state but is syntactically absent or scoped differently in the Mission state. Similarly, the GameGUI or "Hooks" state occupies a unique middle ground, possessing high-level system access (via lfs and io libraries) while gaining access to simulation data through specific bridge namespaces like Export.Lo....3 Understanding this state segregation is fundamental to resolving the user's inquiry regarding API availability.
+1.2 Evolution of the "Hooks" Mechanism
+Historically, external integration with DCS was achieved primarily through Export.lua, a script executed synchronously with the simulation frame. While effective for data export, Export.lua proved fragile for complex server logic or UI modification, often leading to conflicts when multiple modifications attempted to overwrite the same global callbacks.
+The introduction of the GameGUI Hooks system represented a paradigm shift. Located in %USERPROFILE%\Saved Games\DCS\Scripts\Hooks\, these scripts are loaded into the GUI state rather than the simulation state.4 This provides several architectural advantages:
+1. Lifecycle Persistence: Hooks remain active even when the simulation is stopped (e.g., in the main menu or server lobby), allowing for continuous server administration and state management.
+2. Event-Driven Architecture: Unlike the frame-polling nature of Export.lua, Hooks utilize an event subscription model (DCS.setUserCallBacks), allowing scripts to respond to specific triggers such as player connections, slot changes, or chat messages.4
+3. Modular Isolation: Each hook script runs in its own local environment, reducing variable collision risks compared to the singular global scope of Export.lua.
+The following sections will rigorously deconstruct these environments, verifying the specific claims regarding Lo function availability and the safety mechanisms governing them.
+2. The GameGUI (Hooks) Environment: Structure and Capability
+The GameGUI environment, often colloquially referred to as the "Server" environment in multiplayer contexts, serves as the primary interface for administrative control and UI manipulation. Its capabilities are vast, yet they are strictly bounded by the API surface exposed by the engine.
+2.1 Loading and Initialization Logic
+Upon application launch, the DCS engine scans the Scripts/Hooks directory within the user's "Saved Games" folder. The loader identifies all files with the .lua extension and executes them in alphanumeric order. This ordering is critical; if a developer intends to create a dependency chain where one hook relies on a global variable established by another, the file naming convention must ensure the dependency loads first.4
+The initialization process for a hook differs fundamentally from a mission script. A mission script executes linearly when triggered. A hook script, conversely, is primarily a definition file. It defines a table of callback functions and registers this table with the engine using DCS.setUserCallBacks(callback_table).4 Code placed outside these callbacks executes only once during the initial load (splash screen phase), while code inside the callbacks executes in response to engine events.
+2.2 The net Singleton and Server Control
+A defining feature of the GameGUI environment is access to the net singleton. This API provides control over the multiplayer server instance, allowing scripts to kick players, send chat messages, load missions, and query player attributes.
+One of the most significant capabilities within this namespace is net.dostring_in. This function acts as a bridge between the isolated Lua states. As detailed in recent documentation updates (DCS 2.9.18+), net.dostring_in(state, code) allows the GameGUI to inject Lua code into the mission or export states and, crucially, receive return values.5 This mechanism effectively renders the isolation between states permeable for the server administrator, allowing a Hook to query mission flags or export data that might otherwise be inaccessible.
+2.3 Integration with the Simulation Loop
+While the GameGUI operates primarily in the menu/server context, it synchronizes with the simulation via the onSimulationFrame callback. This callback is functionally analogous to LuaExportAfterNextFrame in the Export environment. It fires every time the physics engine completes a step.
+For developers requiring telemetry within a Hook, this callback is the entry point. Research confirms that while the Lo... functions are native to the Export environment, the GameGUI environment can access them by prefixing the call with Export.. For example, LoGetModelTime() becomes Export.LoGetModelTime() within a Hook script.3 This distinction is vital; omitting the prefix is a common source of attempt to call nil value errors in hook development.
+2.4 Comparative Analysis of Environment Capabilities
+To clarify the availability of functions across the ecosystem, the following table synthesizes the access rights of the three primary environments. This comparison highlights why the "Hooks" environment is increasingly favored for complex integrations.
+Feature / API Family
+	Mission Environment (MSE)
+	Export Environment (Export.lua)
+	GameGUI / Hooks Environment
+	Primary Purpose
+	Gameplay logic, triggers, AI tasking.
+	Telemetry output, motion platform data.
+	Server admin, UI mods, persistent logic.
+	Lo... Functions
+	Unavailable (Native). Requires injection.
+	Native Access (e.g., LoGetSelfData).
+	Access via Prefix (Export.LoGetSelfData).
+	net.* API
+	Unavailable.
+	Unavailable.
+	Native Access (Full control).
+	File I/O (io, lfs)
+	Sanitized/Disabled by default.
+	Available (Unrestricted).
+	Available (Unrestricted).
+	Callback System
+	Event handlers (limited).
+	Frame-based (Before/AfterNextFrame).
+	Event-based (onPlayerConnect, etc.).
+	Persistence
+	Resets on mission restart.
+	Resets on mission restart.
+	Persistent across mission loads.
+	3. The Lo and Export.Lo API Ecosystem
+The user's query specifically targets the availability and nature of the Lo... functions. These functions constitute the "Lock On" legacy API, a set of C-exported functions that provide deep access to the simulation's internal state. Understanding their data structures is essential for extracting meaningful telemetry.
+3.1 Namespace Resolution and Availability
+The availability of Lo functions is not uniform. As established, the Export environment treats them as global functions. In the GameGUI environment, they are encapsulated within the Export table.
+This encapsulation suggests that the GameGUI environment does not have its own set of physics bindings but rather "reaches into" the Export environment's namespace. This has safety implications: if the Export environment is disabled by the server configuration (server.advanced.allow_object_export = false), calls to Export.Lo... from the GameGUI may also be inhibited or return restricted data.6
+3.2 Deep Dive: LoGetSelfData and Telemetry
+The LoGetSelfData function is the cornerstone of cockpit integration and motion platform scripting. It returns a snapshot of the player's own aircraft ("Ownship").7
+3.2.1 Data Structure Analysis
+The function returns a Lua table with a specific schema. Unlike modern object-oriented APIs in DCS (like Unit.getByName), LoGetSelfData returns a raw data structure derived from the C++ physics objects.
+* Name: A string representing the unit's mission editor name.
+* LatLongAlt: A nested table containing:
+   * Lat: Latitude in degrees.
+   * Long: Longitude in degrees.
+   * Alt: Altitude in meters (MSL - Mean Sea Level).
+* Heading: The aircraft's true heading in radians.
+* Pitch: The aircraft's pitch attitude in radians.
+* Bank: The aircraft's roll attitude in radians.
+* Position: A vector {x, y, z} representing the unit's position in the internal DCS Euclidean coordinate system.
+Insight on Coordinate Systems: It is crucial to note that DCS uses a flat-earth coordinate system locally for physics (Position.x, Position.z) but maps this to a spherical geoid for navigation (Lat, Long). When developing navigation systems or map overlays using LoGetSelfData, developers must handle the projection conversion if high precision over long distances is required. The LoLoCoordinatesToGeoCoordinates function facilitates this conversion.3
+3.3 The LoGetWorldObjects Function: The "God Mode" API
+While LoGetSelfData focuses on the player, LoGetWorldObjects returns a comprehensive table of all active entities in the simulation radius.
+* Structure: The function returns a table where keys are unit IDs and values are tables containing type, coalition, country, position, and orientation.
+* Security Context: Because this function reveals enemy positions, it is the primary target of anti-cheat restrictions. On most public multiplayer servers, LoIsObjectExportAllowed() checks will prevent this function from returning data to the client.8 Developers of "radar" overlays or tactical displays must account for this restriction, ensuring their scripts fail gracefully (e.g., by checking for nil returns) rather than crashing the Lua thread.
+3.4 Instrumentation and Hardware Integration (LoGetMCPState)
+For physical cockpit builders, flight dynamics are secondary to instrumentation state. The function LoGetMCPState (Master Caution Panel State) allows the export of warning light statuses.
+* Mechanism: This function returns a table of booleans or integers representing the illumination state of cockpit annunciators.
+* Context: Snippets indicate that this function's reliability varies by airframe. High-fidelity modules (like the F/A-18C or F-16C) often use the LoGetCockpitDrawArgumentValue or specific device queries (via GetDevice) instead of the legacy LoGetMCPState.9
+* Recommendation: For modern modules, the Export environment (and by extension GameGUI) allows access to GetDevice(id):get_argument_value(arg). This is the preferred method for reading switch positions and gauge needles, offering granular access to hundreds of cockpit animations.
+3.5 Control Injection: LoSetCommand
+Data flow in DCS is bidirectional. The LoSetCommand(command, value) function allows the script to inject input events into the simulation.11
+* Usage: LoSetCommand(code, value) where code is the integer ID of the command (found in command_defs.lua or clickabledata.lua) and value is the parameter (e.g., 1.0 for "on", 0.0 for "off", or a standardized axis value).
+* Safety Restriction: This function is generally only effective for the local player's aircraft. It cannot be used by a server admin to remotely fly a client's aircraft, enforcing the boundary between administration and simulation manipulation.
+4. File Execution: The LoDoFile vs. dofile Paradigm
+The user query explicitly requests information on LoDoFile. A rigorous analysis of the DCS API documentation and community reverse-engineering efforts suggests that LoDoFile is not a standard, documented function in the modern DCS API set. Instead, it is highly probable that the user is referring to the standard Lua dofile function utilized within the Lo (Export/Hook) context, or a legacy alias that has since been deprecated.
+4.1 The Standard dofile Mechanism
+In the Lua language, dofile(filename) opens a file, compiles its contents as a Lua chunk, and executes it. This is the primary mechanism for modularizing code in DCS.
+* Availability:
+   * Export/Hooks: dofile is fully available. These environments have access to the lfs (Lua File System) library, allowing scripts to dynamically construct paths.
+   * Mission: dofile is available but severely restricted by the lack of lfs. Without lfs, a script cannot easily determine the "Saved Games" directory path, making it difficult to locate external files unless hardcoded paths are used (which is poor practice).
+4.2 Path Resolution with lfs
+The ability to execute external files relies on knowing where those files are. The lfs library is the key enabler here. A typical pattern found in Hook scripts to load external modules is:
+
+
+Lua
+
+
+
+
+-- Standard pattern for loading external modules in Hooks
+local lfs = require('lfs')
+local user_path = lfs.writedir() -- Returns "C:\Users\Name\Saved Games\DCS\"
+package.path = package.path.. ";".. user_path.. "Scripts\\?.lua"
+
+-- Execution
+dofile(user_path.. "Scripts\\MyExternalScript.lua")
+
+This pattern demonstrates that "LoDoFile" functionality is achieved through standard libraries rather than a proprietary API call. The lfs.writedir() function ensures that the script is portable across different user accounts and Windows installations.12
+4.3 LoDoFile as a Misnomer or Legacy Artifact
+If LoDoFile exists in specific legacy documentation, it functionally mirrors dofile. However, reliance on proprietary loaders is discouraged in modern DCS development. The standard dofile allows for better error handling (using pcall) and integration with the Lua package system (require). The research snippets 1 make no reference to LoDoFile as a current API, reinforcing the conclusion that dofile is the correct and supported method.
+5. Safety Requirements and System Integrity
+The integration of Lua scripting with a networked simulation engine introduces significant safety and security challenges. Eagle Dynamics has implemented a multi-tiered security model to prevent the weaponization of mission files.
+5.1 The Sanitization of the Mission Environment
+The primary security barrier in DCS is the sanitization of the Mission Scripting Environment (MSE). A mission file is essentially a container for Lua code. If unrestricted, a mission downloaded from a public server could execute malicious operations on the client's machine.
+To prevent this, the Scripts/MissionScripting.lua file runs at the start of every session. It executes the sanitizeModule function on critical libraries:
+* os: Removed to prevent os.execute (running shell commands).
+* io: Removed to prevent file system reading/writing.
+* lfs: Removed to prevent file system enumeration.
+Safety Requirement: The user query asks about safety. The cardinal rule of DCS scripting safety is do not modify MissionScripting.lua unless absolutely necessary. Modifying this file to "desanitize" the environment (commenting out the sanitizeModule calls) exposes the user to code injection attacks from any mission they load.15
+5.2 The "Hooks" Alternative to Desanitization
+A safer alternative to desanitization is the use of Hook scripts. Because Hook scripts are installed manually by the user into their local Saved Games folder (rather than downloaded as part of a mission), they are implicitly "trusted."
+* Mechanism: Hook scripts retain access to os, io, and lfs.
+* Pattern: Instead of a mission script writing data directly to a file (which requires desanitization), the mission script should pass the data to a Hook script (via net.dostring_in or a user flag), and the Hook script should perform the file I/O. This maintains the security sandbox of the mission environment while allowing the desired functionality.13
+5.3 Secure Cross-Environment Communication
+The bridge between the untrusted Mission environment and the trusted Hook environment is net.dostring_in. However, this bridge itself presents security risks. If a mission script could arbitrarily execute code in the Hook environment, it could bypass sanitization.
+5.3.1 The Allow-List Architecture (DCS 2.9+)
+Recent updates have hardened this interface. The autoexec.cfg configuration file now supports tables that define allow-lists for cross-environment calls:
+* net.allow_unsafe_api: Defines which environments can access potentially dangerous functions.
+* net.allow_dostring_in: Explicitly lists which environments are permitted to be targets of dostring_in calls.5
+Implication: A robust Hook script must be aware that net.dostring_in might fail if the user's security settings are strict. Developers should wrap these calls in protected logic (pcall) to prevent script crashes on secure servers.
+6. Networking and Non-Blocking I/O: Best Practices
+The DCS simulation loop is effectively single-threaded regarding Lua execution. If a Lua script pauses to wait for a network packet or a file write, the entire simulation (graphics, physics, AI) pauses. This creates a "stutter" or "freeze." Therefore, implementing non-blocking Input/Output (I/O) is a critical requirement for any Hooks or Export script.
+6.1 The Hazard of Blocking Sockets
+Standard TCP socket operations are "blocking" by default. A call to socket:receive() will halt execution until data arrives. In a web server, this is acceptable; in a real-time flight simulator, a 100ms delay is catastrophic, disrupting flight control inputs and visual fluidity.
+6.2 The settimeout(0) Pattern
+To achieve non-blocking networking, DCS scripts typically use the LuaSocket library included with the engine. The critical safety mechanism here is the settimeout method.
+* Configuration: tcp_socket:settimeout(0) configures the socket to return immediately.
+* Behavior: When receive() is called on a socket with timeout 0:
+   * If data is in the buffer, it returns the data.
+   * If the buffer is empty, it returns nil and the error string "timeout" instantly.
+This behavior allows the script to "poll" the socket every frame without halting the simulation.
+6.3 Implementation Example: Safe Polling Loop
+The following narrative describes the safe implementation of a TCP listener within a Hook script:
+1. Initialization (onSimulationStart): The script creates a TCP master object, binds it to a port (e.g., localhost:5000), and crucially, sets settimeout(0). It also creates a table to track connected clients.
+2. Frame Polling (onSimulationFrame): Every frame, the script calls server:accept(). Because the timeout is 0, this call checks for a pending connection and returns immediately if none exists. If a client connects, it is added to the client table.
+3. Client Polling: The script iterates through the list of connected clients. For each client, it calls client:receive(). Again, due to the non-blocking timeout, this returns immediately. If data is found, it is processed (e.g., parsing a command to toggle a switch via Export.LoSetCommand).
+4. Error Handling: If receive() returns an error other than "timeout" (e.g., "closed"), the client is removed from the table.
+This polling pattern ensures that the impact on the simulation frame rate is negligible, satisfying the performance safety requirement.17
+6.4 Protocol Selection: TCP vs. UDP
+While the snippets discuss TCP extensively, the choice of protocol is a safety consideration regarding data integrity vs. latency.
+* UDP (User Datagram Protocol): Preferred for telemetry (output). If a packet containing the aircraft's altitude is lost, it does not matter because a new packet with updated altitude will be generated in the next frame. UDP is "fire and forget," imposing minimal overhead on the simulation.20
+* TCP (Transmission Control Protocol): Preferred for state control (input). If an external command to "Lower Gear" is sent, it must arrive. TCP guarantees delivery. However, the overhead of handshaking and acknowledgement requires the rigorous non-blocking implementation described above to prevent lag.21
+7. Inter-Environment Communication: The net.dostring_in Revolution
+The most significant recent development in the DCS scripting landscape is the enhancement of net.dostring_in. This function has transformed from a one-way command channel into a bidirectional data bus.
+7.1 Historical Context vs. Modern Capability
+Previously, net.dostring_in("mission", "...") could execute code in the mission environment, but it could not return values to the Hook environment. Developers resorted to clumsy workarounds, such as having the mission script write a file to disk, which the Hook script would then read—a slow and I/O-intensive process.
+With DCS 2.9, net.dostring_in now supports return values. A Hook script can execute: local result = net.dostring_in('mission', 'return trigger.misc.getUserFlag("Status")') This instantly retrieves the value of the flag. This capability allows Hooks to act as sophisticated monitors for mission logic without modifying the mission files themselves.5
+7.2 Data Serialization Challenges
+A constraint of net.dostring_in is that it passes data as strings. Passing complex Lua tables requires serialization (converting the table to a string) and deserialization.
+* Implication: Developers must implement or include serialization logic (e.g., JSON encoding/decoding) within the string passed to dostring_in.
+* Performance: While faster than file I/O, passing massive strings (megabytes of data) via this method every frame can still induce garbage collection overhead in Lua. It is best reserved for low-frequency state checks or event-driven updates rather than continuous high-frequency telemetry.
+8. Conclusion
+The DCS World scripting environment is a tiered architecture where safety and stability are prioritized through state isolation. The GameGUI (Hooks) environment has emerged as the premier locus for complex integration, offering a persistent, high-privilege context that bridges the gap between the external OS and the internal simulation.
+The Lo... family of functions, particularly LoGetSelfData and LoGetWorldObjects, remains the definitive source of simulation state, accessible in Hooks via the Export namespace. While LoDoFile appears to be a colloquialism for the standard dofile paired with lfs path resolution, the capability it implies—dynamic file loading—is fully supported and widely used.
+However, the power of this environment is coupled with strict responsibilities. The single-threaded nature of the engine mandates non-blocking network I/O patterns to prevent simulation freezes. The security model requires adherence to "Secure Zone" configurations and discourages the crude desanitization of the Mission environment in favor of the more secure Hook-based architecture. By respecting these architectural boundaries and utilizing the modern capabilities of the net API, developers can achieve deep, performant integration with the DCS platform.
+9. Appendix: API Reference Table
+The following table summarizes the key functions discussed, their availability, and typical usage context.
+Function
+	Environment
+	Availability
+	Purpose
+	LoGetSelfData
+	Export
+	Native
+	Returns Ownship telemetry (Pos, Att, Name).
+	Export.LoGetSelfData
+	GameGUI
+	Native (via prefix)
+	Returns Ownship telemetry in Hook scripts.
+	LoGetWorldObjects
+	Export
+	Restricted
+	Returns all units. often blocked by Anti-Cheat.
+	LoSetCommand
+	Export
+	Native
+	Injects cockpit input commands.
+	net.dostring_in
+	GameGUI
+	Native
+	Executes code in other states; supports returns (2.9+).
+	dofile
+	All
+	Mixed
+	Loads Lua files. Requires lfs for dynamic paths (Hooks only).
+	DCS.setUserCallBacks
+	GameGUI
+	Native
+	Registers event listeners for the Hook.
+	lfs.writedir
+	GameGUI/Export
+	Native
+	Returns path to "Saved Games/DCS".
+	socket.tcp
+	All
+	Native (via require)
+	Creates TCP object. Must use settimeout(0).
+	Works cited
+1. Lua environment - DCS World, accessed on January 15, 2026, https://www.digitalcombatsimulator.com/en/support/faq/1253/
+2. Lua — DCSWD 0.1.0 documentation - Read the Docs, accessed on January 15, 2026, https://dcswd.readthedocs.io/en/latest/lua.html
+3. export.lua mess hard to maintain - Installation Problems - DCS World Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/244304-exportlua-mess-hard-to-maintain/
+4. DCS server gameGUI - DCS World Wiki - Hoggitworld.com, accessed on January 15, 2026, https://wiki.hoggitworld.com/view/DCS_server_gameGUI
+5. Changes to the behaviour of net.dostring_in() - Scripting Tips, Tricks & Issues - ED Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/376636-changes-to-the-behaviour-of-netdostring_in/
+6. New File Integrity Check - Page 8 - DCS 2.9 - ED Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/138457-new-file-integrity-check/page/8/
+7. Exporting self coordinates (export.lua) - Home Cockpits - DCS World Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/135111-exporting-self-coordinates-exportlua/
+8. DCS Export Script - DCS World Wiki - Hoggitworld.com - Hoggit Wiki, accessed on January 15, 2026, https://wiki.hoggitworld.com/view/DCS_Export_Script
+9. Export.lua working functions - DCS Modding - ED Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/112094-exportlua-working-functions/
+10. Glowing vehicles · Issue #103 · dcs-liberation/dcs_liberation - GitHub, accessed on January 15, 2026, https://github.com/dcs-liberation/dcs_liberation/issues/103
+11. DCS export - DCS World Wiki - Hoggitworld.com, accessed on January 15, 2026, https://wiki.hoggitworld.com/view/DCS_export
+12. DCS-gRPC/rust-server - GitHub, accessed on January 15, 2026, https://github.com/DCS-gRPC/rust-server
+13. DCS 2.8 - Flight Sims - Mudspike Forums, accessed on January 15, 2026, https://forums.mudspike.com/t/dcs-2-8/14536
+14. DCS World Lua scripting functions and class definitions for VS Code hints - GitHub, accessed on January 15, 2026, https://github.com/omltcat/dcs-lua-definitions/
+15. Is there a way to get DCS's lua to read/write from/to a file? : r/hoggit - Reddit, accessed on January 15, 2026, https://www.reddit.com/r/hoggit/comments/7b7u79/is_there_a_way_to_get_dcss_lua_to_readwrite/
+16. access to OS:time without having to comment out the sanitize code - DCS Core Wish List, accessed on January 15, 2026, https://forum.dcs.world/topic/241597-access-to-ostime-without-having-to-comment-out-the-sanitize-code/
+17. LuaSocket - non-blocking connect ?, accessed on January 15, 2026, https://lua-l.lua.narkive.com/3H22UMMO/luasocket-non-blocking-connect
+18. 'setTimeout' with Time 0 Explained! | by Devesh Shukla - Medium, accessed on January 15, 2026, https://imdeveshshukla.medium.com/settimeout-with-time-0-explained-967f3133e305
+19. Sockets and DCS.onPlayerTryConnect performance - How To Mod ..., accessed on January 15, 2026, https://forum.dcs.world/topic/164756-sockets-and-dcsonplayertryconnect-performance/
+20. DCS-BIOS Developer Guide, accessed on January 15, 2026, http://dcs-bios.a10c.de/docs/v0.7.0/developerguide.html
+21. LUA Export NMEA AHRS & GPS over TCP/IP - How To Mod for DCS World - ED Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/147896-lua-export-nmea-ahrs-amp-gps-over-tcpip/
+22. Socket Programming in Python (Guide), accessed on January 15, 2026, https://realpython.com/python-sockets/

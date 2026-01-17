@@ -1,0 +1,50 @@
+{
+    "coords": "latlon",
+    "altUnit": "ft",
+    "distUnit": "km",
+    "defAlt": 20000,
+    "layer": "dark",
+    "visibleRoutes": [
+        "ruta 1",
+        "Unnamed Route",
+        "test",
+        "1234"
+    ],
+    "navFlyBy": false,
+    "navCourseLine": true,
+    "colors": {
+        "latlon": "#00ffcc",
+        "mgrs": "#733f59",
+        "mgrsGzd": "#988035"
+    },
+    "overlays": {
+        "contours": false,
+        "urban": false,
+        "roads": false,
+        "labels": false
+    },
+    "view": {
+        "zoom": 13,
+        "center": {
+            "lat": 41.95858846664671,
+            "lng": 41.84820433461828
+        }
+    },
+    "threatFill": 20,
+    "vis": {
+        "airports": true,
+        "units": true,
+        "units_air": true,
+        "units_ground": true,
+        "units_naval": true,
+        "units_static": true,
+        "pois": true,
+        "threats": true,
+        "grid": false,
+        "mgrs": false,
+        "alt": true,
+        "hdg": true,
+        "wakeLock": false,
+        "hudMode": 0
+    }
+}

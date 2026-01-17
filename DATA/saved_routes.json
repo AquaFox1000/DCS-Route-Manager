@@ -1,0 +1,173 @@
+{
+    "1234": {
+        "imported": "L",
+        "map": "Caucasus",
+        "pois": [
+            {
+                "color": "#e74c3c",
+                "lat": 42.31139331073004,
+                "lon": 42.25283664469611,
+                "name": "Mark",
+                "sidc": "SHGPUCD----",
+                "threatDeadly": 6,
+                "threatDeadlyEnabled": true,
+                "threatDetect": 20,
+                "threatDetectEnabled": true
+            },
+            {
+                "color": "#e74c3c",
+                "lat": 42.44032981858718,
+                "lon": 41.857857488159034,
+                "name": "Mark",
+                "sidc": "SHGPUCDS--",
+                "threatDeadly": 30,
+                "threatDeadlyEnabled": true,
+                "threatDetect": 45,
+                "threatDetectEnabled": true
+            },
+            {
+                "lat": 41.57469645689478,
+                "lon": 42.36307584444528,
+                "name": "Mark",
+                "color": "#ffff00",
+                "sidc": "SHGPU-------"
+            }
+        ],
+        "routes": {
+            "1234": {
+                "color": "#8f008a",
+                "points": [
+                    {
+                        "alt": 6095.999804928007,
+                        "altType": "MSL",
+                        "alt_agl": 6093,
+                        "alt_msl": 6096,
+                        "lat": 42.20300832807666,
+                        "lon": 41.64838024441427,
+                        "name": "WP 1",
+                        "type": "wp"
+                    },
+                    {
+                        "alt": 6095.999804928007,
+                        "altType": "MSL",
+                        "alt_agl": 6091,
+                        "alt_msl": 6096,
+                        "lat": 42.200463466416025,
+                        "lon": 41.82068695534137,
+                        "name": "WP 2",
+                        "type": "wp"
+                    },
+                    {
+                        "alt": 6095.999804928007,
+                        "altType": "MSL",
+                        "alt_agl": 6087,
+                        "alt_msl": 6096,
+                        "lat": 42.18213743677389,
+                        "lon": 42.04379325435055,
+                        "name": "WP 3",
+                        "type": "wp"
+                    },
+                    {
+                        "alt": 6095.999804928007,
+                        "altType": "MSL",
+                        "alt_agl": 6081,
+                        "alt_msl": 6096,
+                        "lat": 42.13375157151863,
+                        "lon": 42.20237034687711,
+                        "name": "WP 4",
+                        "type": "wp"
+                    }
+                ]
+            },
+            "test": {
+                "color": "#a80000",
+                "points": [
+                    {
+                        "alt": 6095.999804928007,
+                        "altType": "MSL",
+                        "alt_agl": 6095,
+                        "alt_msl": 6096,
+                        "lat": 42.21375469557777,
+                        "lon": 41.676166337826885,
+                        "name": "WP 1",
+                        "type": "wp"
+                    },
+                    {
+                        "alt": 6095.999804928007,
+                        "altType": "MSL",
+                        "alt_agl": 6085,
+                        "alt_msl": 6096,
+                        "lat": 42.38044526747632,
+                        "lon": 41.769527742950764,
+                        "name": "WP 2",
+                        "type": "wp"
+                    },
+                    {
+                        "alt": 6095.999804928007,
+                        "altType": "MSL",
+                        "alt_agl": 5943,
+                        "alt_msl": 6096,
+                        "lat": 42.280890539514154,
+                        "lon": 42.063341576722856,
+                        "name": "WP 3",
+                        "type": "wp"
+                    },
+                    {
+                        "alt": 6095.999804928007,
+                        "altType": "MSL",
+                        "alt_agl": 5883,
+                        "alt_msl": 6096,
+                        "lat": 42.01396055074085,
+                        "lon": 42.00842310312057,
+                        "name": "WP 4",
+                        "type": "wp"
+                    }
+                ]
+            }
+        }
+    },
+    "test 1": {
+        "imported": "L",
+        "map": "Caucasus",
+        "pois": [
+            {
+                "color": "#e74c3c",
+                "lat": 35.76679382488966,
+                "lon": 36.54869232126702,
+                "name": "Mark",
+                "sidc": "SHGPUCDG--",
+                "threatDeadly": 2,
+                "threatDeadlyEnabled": true,
+                "threatDetect": 4,
+                "threatDetectEnabled": true
+            }
+        ],
+        "routes": {
+            "Unnamed Route": {
+                "color": "#941010",
+                "points": [
+                    {
+                        "alt": 609.5999804928007,
+                        "altType": "MSL",
+                        "alt_agl": -76,
+                        "alt_msl": 610,
+                        "lat": 35.76551944444444,
+                        "lon": 36.554313888888885,
+                        "name": "TGT",
+                        "type": "tgt"
+                    },
+                    {
+                        "alt": 609.5999804928007,
+                        "altType": "MSL",
+                        "alt_agl": 433,
+                        "alt_msl": 610,
+                        "lat": 35.579344444444445,
+                        "lon": 36.271052777777776,
+                        "name": "TGT",
+                        "type": "tgt"
+                    }
+                ]
+            }
+        }
+    }
+}

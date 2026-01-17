@@ -1,0 +1,33 @@
+{
+    "current": "Su-25T - 3 Monitor config",
+    "profiles": {
+        "Default": {
+            "theme": "su25",
+            "color": "#00ff33",
+            "brightness": 1,
+            "scale": 100,
+            "offset_y": 0,
+            "showDirector": true,
+            "showWpInfo": true,
+            "win_x": 0,
+            "win_y": 0,
+            "win_w": 1920,
+            "win_h": 1200
+        },
+        "Su-25T - 3 Monitor config": {
+            "theme": "uh60l",
+            "color": "#00ff33",
+            "brightness": 0.5,
+            "scale": 100,
+            "offset_y": 0,
+            "showDirector": true,
+            "showWpInfo": true,
+            "win_x": 0,
+            "win_y": 0,
+            "win_w": 1920,
+            "win_h": 1200,
+            "fov": 80
+        }
+    },
+    "clickable_enabled": false
+}

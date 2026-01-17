@@ -1,0 +1,238 @@
+﻿Architectural Specification for High-Reliability TCP Interfaces in Digital Combat Simulator
+1. Executive Summary
+The integration of external logic processing with high-fidelity flight simulation platforms represents a complex challenge in real-time systems architecture. Specifically, within the Digital Combat Simulator (DCS) ecosystem, the requirement to establish a reliable, stable, and performance-neutral data link between the internal simulation engine and an external Python application necessitates a departure from traditional "fire-and-forget" UDP broadcast models. This report provides a comprehensive architectural analysis and implementation specification for a TCP-based telemetry interface where the simulation acts as a dormant server, activating data transmission only upon the active connection of a Python client.
+This analysis prioritizes system stability, specifically the mitigation of "micro-stutters" caused by synchronous I/O blocking within the DCS main execution thread. By leveraging the GameGUI (Hooks) environment, developers can decouple the network interface lifecycle from the mission lifecycle, ensuring persistent availability. The report delineates a rigorous block structure for both the Lua-based server and the Python-based client, emphasizing the necessity of non-blocking socket configurations, precise message framing, and defensive state management. The findings indicate that a reliable connection is not merely a product of choosing TCP over UDP, but rather the result of implementing a robust Finite State Machine (FSM) within the Lua hook that gracefully handles the transient nature of network connections without interrupting the deterministic physics loop of the simulator.
+2. Theoretical Framework and Environment Selection
+To architect a robust interface, one must first deconstruct the proprietary scripting engine that drives Digital Combat Simulator. DCS does not expose a standard C++ API for general users; instead, it embeds a Lua 5.1 interpreter to handle game logic, user interfaces, and mission scripting. The stability of any network connection depends entirely on where within this Lua hierarchy the networking code resides.
+2.1 The Taxonomy of DCS Lua Environments
+The DCS simulation engine partitions Lua execution into distinct "states" or "environments." These environments are sandboxed from one another to prevent variable collision and to secure the simulation against malicious code execution during multiplayer sessions. Understanding the lifecycle and visibility of these environments is the first requirement for establishing a stable connection.1
+2.1.1 The Mission Scripting Environment
+The Mission Scripting environment is the most accessible but least suitable layer for infrastructure-level networking. Scripts here are embedded directly into the .miz (mission) file or loaded via the Mission Editor's trigger system.
+* Lifecycle Volatility: The Lua state for mission scripts is created when a mission loads and is destroyed when the mission ends. This cyclic destruction means that any network socket created within this environment is forcibly closed and must be re-initialized with every mission restart. This places a heavy burden on the external Python client to constantly detect connection loss and re-establish the link.2
+* Security Sanitization: To protect clients, Eagle Dynamics (the developer of DCS) "sanitizes" this environment by removing critical libraries such as os, io, and package. The package library is essential for loading external modules like luasocket. While users can modify the MissionScripting.lua file to restore these libraries, doing so breaks the "Integrity Check" (IC) required for joining many public multiplayer servers.3
+* Architectural Verdict: Due to the lack of persistence and the requirement to modify core game files (which degrades the user experience), the Mission Scripting environment is rejected for this application.
+2.1.2 The Export Environment (Export.lua)
+Historically, Export.lua has been the standard interface for cockpit builders and motion platform software. It runs in a dedicated environment that has native access to the Lo* family of functions (e.g., LoGetSelfData, LoGetAltitude), which are specifically designed for telemetry extraction.5
+* Operational Scope: The Export.lua script is executed every time a simulation starts (i.e., when the player enters the cockpit). It stops when the simulation stops.
+* The Chaining Problem: A significant limitation of Export.lua is its singular nature. There is only one Export.lua file per user. If a user runs multiple tools (e.g., Tacview, SRS, and a custom Python script), they must manually edit the file to "chain" the callbacks. If one script in the chain encounters an unhandled error, it can halt the execution of all subsequent scripts, leading to a fragile ecosystem.7
+* Connection Instability: Like the Mission environment, the Export environment is tied to the simulation activity. It does not run when the player is in the main menu or the multiplayer lobby. A Python client connecting to a dormant hook needs a listener that is active before the simulation starts to ensure data capture begins at   . Export.lua cannot provide this pre-simulation connectivity.9
+2.1.3 The GameGUI (Hooks) Environment
+The GameGUI environment, often referred to as "Hooks," represents the optimal architectural choice for a reliable, persistent TCP server. Scripts placed in Saved Games\DCS\Scripts\Hooks are loaded by the DCS_ControlAPI immediately upon application startup.10
+   * Lifecycle Persistence: Crucially, the Lua state for Hooks is persistent throughout the entire duration of the DCS application process. It does not reset between missions. A TCP socket bound and set to listen in this environment remains active regardless of whether the user is flying, configuring settings, or waiting in a server lobby.10
+   * Event-Driven Architecture: The Hooks environment utilizes a callback system (DCS.setUserCallbacks). This allows the script to respond to high-level application events (onSimulationStart, onSimulationFrame, onPlayerConnect) rather than just physics frames. This level of abstraction is necessary for managing the state of a dormant listener that must wake up when the simulation begins.10
+   * Data Access Bridge: While the GameGUI environment historically had limited access to real-time telemetry (which resides in the Export environment), modern iterations of DCS allow bridging this gap. Methods such as net.dostring_in('export',...) or direct access to specific singleton APIs allow the Hook to extract the necessary flight data, or the Export state can be manipulated to push data to the Hook.1 Furthermore, recent updates have exposed more simulation data directly to the GameGUI environment for server administration purposes, which can be repurposed for telemetry.10
+2.3 Architectural Decision: The Dormant Hook Pattern
+Based on the comparative analysis of the environments, the "Dormant Hook" pattern is the most robust solution. In this architecture, the Lua script acts as a TCP Server. It binds to a port and listens for incoming connections.
+   * Dormant State: When no Python client is connected, the Hook performs a lightweight check (polling) once per second or once per frame to see if a connection attempt is being made. It does not process telemetry, execute complex logic, or format JSON strings. It simply listens. This minimizes CPU impact.15
+   * Active State: When the Python client connects, the Hook transitions to an active state. It begins querying simulation data, serializing it, and pushing it over the TCP socket.
+   * Reliability: This inversion of control—where DCS listens rather than connects—is superior for reliability. If the Python script crashes, DCS simply detects the broken pipe and reverts to the Dormant State. It does not crash, nor does it hang trying to reconnect to a vanished server. It waits patiently for the client to return.17
+3. Network Protocol Architecture: TCP vs. UDP
+The user's query explicitly requests research on a TCP connection. While UDP (User Datagram Protocol) is frequently used in flight simulation for high-frequency telemetry due to its low overhead and "fire-and-forget" nature, TCP (Transmission Control Protocol) offers distinct advantages that are critical for a "reliable and stable" connection, particularly for control systems or state-dependent applications.19
+3.1 The Case for TCP in Simulation Integration
+Reliability in a data transport context refers to the guarantee that data sent is data received, and that it is received in the correct order.
+   * Ordered Delivery: In a flight simulation, the sequence of events is critical. If a script sends a "Gear Down" command followed immediately by a "Gear Locked" confirmation, UDP could theoretically deliver these out of order, confusing the external logic. TCP guarantees that the Python script receives the state changes exactly as DCS generated them.19
+   * Congestion Control: DCS telemetry can be voluminous, containing hundreds of floating-point datapoints (avionics, control surfaces, navigation). On a saturated network or a machine under heavy CPU load, UDP packets might be dropped. TCP manages flow control, ensuring that the sender (DCS) slows down if the receiver (Python) cannot keep up, preventing silent data loss.19
+   * Connection State Awareness: A TCP connection is stateful. The Lua script knows definitively if the Python client is connected. This allows the "Dormant" logic to work correctly; the script stops doing work (gathering data) immediately upon disconnection. With UDP, the script would have to continue blindly blasting data into the void, wasting CPU cycles on serialization.21
+3.2 Addressing TCP Latency (Nagle's Algorithm)
+The primary criticism of TCP in gaming/simulation is latency. TCP tends to buffer small packets to send them more efficiently, a behavior governed by Nagle's Algorithm. In a real-time simulation where data is generated at 60Hz or 144Hz, waiting 200ms to fill a buffer is unacceptable.
+   * The Solution: The "reliable and stable" requirement necessitates the use of the TCP_NODELAY socket option. This disables Nagle's Algorithm, forcing the OS network stack to transmit data immediately upon the send() call. This aligns the TCP packet stream with the simulation frame rate, providing the immediacy of UDP with the reliability of TCP.5
+4. Server-Side (DCS Lua) Implementation Requirements
+Implementing a TCP listener within the single-threaded constraint of the DCS simulation loop requires strict adherence to non-blocking I/O principles. A violation of these principles will result in the simulation freezing ("hanging") while it waits for network activity.
+4.1 Loading the LuaSocket Library
+The first technical hurdle is accessing the luasocket library. Although shipped with DCS, it is not always in the default package path for the Hooks environment. The script must dynamically locate the DCS installation directory or use relative paths to load the necessary DLLs (core.dll for socket support).23
+Block Structure: Library Initialization
+The initialization block must occur once, typically at the top of the script or within the onSimulationStart callback. It involves:
+   1. Appending the DCS Scripts/LuaSocket paths to package.path (for Lua files) and package.cpath (for binary DLLs).
+   2. Calling require("socket") to load the namespace.
+   3. Error handling: If the library fails to load, the script must degrade gracefully (disable itself) rather than crashing the interface.25
+4.2 Non-Blocking Socket Configuration
+This is the most critical requirement for stability. Standard socket operations are blocking; if the script calls server:accept(), execution stops until a client connects. In DCS, this would pause the rendering engine.
+To prevent this, the socket must be configured with settimeout(0).
+   * Mechanism: master:settimeout(0) tells the LuaSocket library to make the socket non-blocking.
+   * Behavior: When master:accept() is called, if a client is waiting, it returns the client object. If no client is waiting, it returns nil immediately with a specific error string "timeout".
+   * Handling: The script must treat the "timeout" error not as a failure, but as a "no operation" signal, simply returning control to the DCS engine until the next frame.27
+4.3 The Server State Machine (Block Structure)
+The internal logic of the Hook script should follow a Finite State Machine (FSM) pattern to manage the connection lifecycle.
+Block 1: The Setup Phase (onSimulationStart)
+   * Create the TCP master socket object: socket.bind('*', PORT).
+   * Configure settimeout(0) on the master socket.
+   * Initialize the state variable: State = "LISTENING".
+   * Log the successful initialization to dcs.log.5
+Block 2: The Polling Loop (onSimulationFrame)
+This block runs repeatedly (e.g., 100+ times per second). Performance optimization here is vital.
+   * Condition: IF State == "LISTENING"
+   * Action: Call client = master:accept().
+   * Outcome A (No Connection): Returns nil. The function exits immediately. Cost: Negligible.
+   * Outcome B (Connection Accepted): Returns a client object.
+   * Configure client:settimeout(0) (Crucial: the client socket must also be non-blocking).
+   * Configure client:setoption("tcp-nodelay", true) (Latency reduction).
+   * Update state: State = "CONNECTED".
+   * Log "Python Client Connected".
+Block 3: The Data Push Phase (onSimulationFrame)
+   * Condition: IF State == "CONNECTED"
+   * Action: Retrieve simulation data (e.g., LoGetSelfData()).
+   * Serialization: Encode the data table into a JSON string.
+   * Framing: Append a newline character (\n) to the JSON string. This acts as a message delimiter for the Python client.
+   * Transmission: Call client:send(data).
+   * Error Handling: Because the socket is non-blocking, send might return a "timeout" (buffer full) or "closed" (client disconnected).
+   * If "timeout": Ignore (drop packet) or retry partial send. In simulation, dropping old data is often preferred to buffering.
+   * If "closed" or "broken pipe": Close the client socket, set client = nil, and revert State to "LISTENING". This auto-resets the listener for a future reconnection.30
+Block 4: The Cleanup Phase (onSimulationStop / onPlayerDisconnect)
+   * Ensure the client socket is closed cleanly if the server shuts down.
+   * Note: The master socket should generally remain open in the Hooks environment to accept connections in the next mission, unless DCS itself is closing.10
+4.4 Defensive Programming and Error Containment
+Lua runtime errors in DCS hooks can be catastrophic, potentially disabling the hook for the session or even crashing the game logic.
+   * Requirement: Wrap the critical loop logic (specifically data gathering and sending) in a pcall (Protected Call).
+   * Logic: local status, err = pcall(function()... end). If status is false, log the error err but do not let it propagate. This ensures that a transient bug (e.g., trying to access altitude data before the aircraft object is fully spawned) does not kill the TCP server.8
+5. Client-Side (Python) Implementation Requirements
+The Python script acts as the active agent (TCP Client). Its primary requirements are robustness against server unavailability and correct handling of the TCP stream.
+5.1 The Robust Connection Loop
+The Python client must be designed with the assumption that the DCS server might not be running, might be restarting, or might crash.
+   * Requirement: A persistent while loop that attempts to connect.
+   * Mechanism:
+   * Attempt socket.connect((HOST, PORT)).
+   * Catch ConnectionRefusedError (WinError 10061).
+   * If caught, time.sleep(1) and retry.
+   * This allows the Python script to be launched before DCS, fulfilling the "reliable connection flow" requirement by waiting patiently for the server to come online.33
+5.2 Stream Framing and Buffering
+A common failure mode in TCP implementations is treating recv() as if it returns exactly one message. TCP is a stream protocol; packets can be fragmented or coalesced.
+   * Scenario: DCS sends {"alt": 100}\n and {"alt": 101}\n back-to-back.
+   * Risk: Python's recv(4096) might return {"alt": 100}\n{"alt":. If the code simply tries to JSON-parse this buffer, it will crash.
+   * Requirement: Implementing a "Socket Reader" block that buffers incoming data.
+   * Append new data to a persistent string buffer.
+   * Check for the delimiter (\n).
+   * Split the buffer at the delimiter.
+   * Process the first part (complete message).
+   * Keep the remainder in the buffer for the next recv() cycle.
+   * This ensures 100% data integrity regardless of network fragmentation.35
+5.3 Keep-Alive Logic
+To detect if DCS has crashed (without closing the socket gracefully), the Python client should monitor for "Zero Byte Reads."
+   * Mechanism: If sock.recv() returns an empty bytes object (b''), the peer has closed the connection. The Python script must interpret this as a disconnect event, close its local socket, and re-enter the "Robust Connection Loop" to await the restart of DCS.35
+6. Detailed Connection Flow
+The reliable connection flow is defined by the interaction between the asynchronous states of the DCS Server and the Python Client.
+Step
+	DCS Server State (Lua)
+	Python Client State
+	Interaction
+	1
+	LISTENING (Dormant). Polling accept() in onSimulationFrame. Returns nil (timeout).
+	CONNECTING. Loop: connect() -> Refused -> sleep.
+	No Connection.
+	2
+	LISTENING.
+	CONNECTING. Calls connect().
+	OS Handshake (SYN/ACK).
+	3
+	LISTENING -> Calls accept(). Returns client object. Transitions to CONNECTED.
+	CONNECTED. enters recv() loop.
+	Socket Established.
+	4
+	CONNECTED. Collects data -> JSON -> client:send().
+	RECEIVING. recv() returns data. Buffers & frames message.
+	Data Push.
+	5
+	CONNECTED. Simulation ends. send() fails or Hook closes socket. Transitions to LISTENING.
+	RECEIVING. recv() returns 0 bytes. Detects closure. Transitions to CONNECTING.
+	Disconnection & Reset.
+	7. Reliability and Stability Factors
+The following factors are synthesized from the research as the determinants of a reliable connection in this domain:
+7.1 Independence of Lifecycle
+By using the Hooks environment rather than Export.lua, the TCP server lifecycle is decoupled from the mission. It does not need to re-bind ports every 20 minutes when a mission rotates. This stability prevents "Address Already In Use" errors and simplifies the client logic significantly.37
+7.2 Asynchronous I/O (Non-Blocking)
+Stability in a flight simulator is defined by frame rate consistency. A blocking socket operation introduces jitter. The rigorous application of settimeout(0) on the Lua side ensures that networking never consumes more than a few microseconds per frame, regardless of network latency or client status.27
+7.3 Data Integrity via Framing
+Reliability of the data is ensured by the newline delimiter strategy. This handles the stream nature of TCP, ensuring that JSON parsers never receive partial or concatenated garbage data.36
+7.4 Self-Healing Capability
+Both the server (Lua) and client (Python) implement "Let It Crash" philosophies for the connection object. If any error occurs (timeout, reset, broken pipe), the entity destroys the specific connection object and returns to its initial listening/connecting state. This makes the system resilient to crashes of either application.16
+8. Performance Analysis and Optimization
+8.1 Garbage Collection Impact
+In Lua 5.1 (DCS's version), string concatenation creates garbage memory. Generating large JSON strings every frame (e.g., 144Hz) can trigger the Lua Garbage Collector (GC), causing frame spikes.
+   * Optimization: The Lua script should use table.concat() for string building rather than the .. operator.
+   * Throttling: While the hook runs every frame, data transmission does not need to match the frame rate. Implementing a timer check (if currentTime - lastSendTime > 0.03 then...) to cap updates at 30Hz or 60Hz significantly reduces CPU load and GC pressure without perceptible latency for the user.2
+9. Conclusion
+The establishment of a reliable TCP connection between DCS and Python requires a sophisticated architectural approach that respects the single-threaded limitations of the simulation engine. By utilizing the GameGUI Hooks environment, developers can create a persistent, dormant server that survives mission transitions. The stability of this connection is secured through non-blocking I/O configuration, preventing simulation freezes, and the reliability of data transfer is guaranteed by strict TCP framing and defensive state management in both Lua and Python. This architecture transforms DCS into a robust server capable of driving complex external avionics and telemetry applications with high fidelity.
+10. Appendix: Reference Implementation Data
+Table 1: API Accessibility by Environment
+API Function
+	Export.lua
+	GameGUI (Hooks)
+	Notes
+	LoGetSelfData
+	Native
+	Bridged/Native*
+	*Access depends on DCS version; usually requires Export.LoGetSelfData prefix or net.dostring_in.
+	DCS.setUserCallbacks
+	No
+	Yes
+	Required for the event-driven FSM.
+	socket.bind
+	Yes
+	Yes
+	Requires package.path modification in both.
+	os.clock
+	Yes
+	Yes
+	Useful for throttling transmission rates.
+	Table 2: Recommended Socket Options
+Option
+	Value
+	Side
+	Reason
+	timeout
+	0
+	DCS (Server)
+	Prevents blocking the simulation thread.
+	tcp-nodelay
+	true
+	Both
+	Disables Nagle's algorithm to reduce latency.
+	reuseaddr
+	true
+	DCS (Server)
+	Allows immediate rebinding of the port if DCS restarts.
+	keepalive
+	true
+	Python (Client)
+	Helps detect "zombie" connections if the network drops.
+	Works cited
+   1. Difference between Gamegui and mission script - DCS World Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/156576-difference-between-gamegui-and-mission-script/
+   2. How does the scripting engine work - Mission Editor - DCS World Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/244486-how-does-the-scripting-engine-work/
+   3. export.lua and script inside mission - DCS World Forums - Digital Combat Simulator, accessed on January 15, 2026, https://forum.dcs.world/topic/120465-exportlua-and-script-inside-mission/
+   4. net module - Mission Editor - DCS World Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/123423-net-module/
+   5. DCS export - DCS World Wiki - Hoggitworld.com, accessed on January 15, 2026, https://wiki.hoggitworld.com/view/DCS_export
+   6. LoGetWorldObjects() - DCS World Forums - Digital Combat Simulator, accessed on January 15, 2026, https://forum.dcs.world/topic/133284-logetworldobjects/
+   7. Suggestion for better export.lua to allow multiple plugins - DCS Modding - ED Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/223900-suggestion-for-better-exportlua-to-allow-multiple-plugins/
+   8. export.lua mess hard to maintain - Installation Problems - DCS World Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/244304-exportlua-mess-hard-to-maintain/
+   9. Export Lua Guidence - Home Cockpits - DCS World Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/145724-export-lua-guidence/
+   10. DCS server gameGUI - DCS World Wiki - Hoggitworld.com, accessed on January 15, 2026, https://wiki.hoggitworld.com/view/DCS_server_gameGUI
+   11. Whats the purpose of Saved Games Scripts folder and hook folder - DCS World Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/185359-whats-the-purpose-of-saved-games-scripts-folder-and-hook-folder/
+   12. Need help getting started with low level scripting - Mission Editor - DCS World Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/332292-need-help-getting-started-with-low-level-scripting/
+   13. net.dostring_in scripting environment - Mission Editor - DCS World Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/139765-netdostring_in-scripting-environment/
+   14. The Lua Console — DCS-BIOS v0.10.0 documentation, accessed on January 15, 2026, https://dcs-bios.readthedocs.io/en/latest/lua-console.html
+   15. pet333r/pw-dev_script: Script for DCS World - GitHub, accessed on January 15, 2026, https://github.com/pet333r/pw-dev_script
+   16. export.lua and Importing data - Home Cockpits - DCS World Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/104093-exportlua-and-importing-data/
+   17. Example: Nonblocking I/O and select() - IBM, accessed on January 15, 2026, https://www.ibm.com/docs/en/ssw_ibm_i_74/rzab6/xnonblock.htm
+   18. Non-blocking accept() : r/cpp - Reddit, accessed on January 15, 2026, https://www.reddit.com/r/cpp/comments/wbni3/nonblocking_accept/
+   19. What is the difference between TCP and UDP, and how does each impact system design choices?, accessed on January 15, 2026, https://www.designgurus.io/answers/detail/what-is-the-difference-between-tcp-and-udp-and-how-does-each-impact-system-design-choices
+   20. TCP vs UDP: What's the Difference and Which Protocol Is Better? - Avast, accessed on January 15, 2026, https://www.avast.com/c-tcp-vs-udp-difference
+   21. System Design: TCP and UDP - DEV Community, accessed on January 15, 2026, https://dev.to/karanpratapsingh/system-design-tcp-and-udp-m85
+   22. TCP vs UDP: Understanding Network Protocol Fundamentals - Blog - Pragmatic AI Labs, accessed on January 15, 2026, https://paiml.com/blog/2025-02-26-tcp-vs-udp-fundamentals/
+   23. Export.lua - Peksa/dcs-http - GitHub, accessed on January 15, 2026, https://github.com/Peksa/dcs-http/blob/master/lua/Export.lua
+   24. Location of Luasocket - Utility/Program Mods for DCS World - ED Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/70430-location-of-luasocket/
+   25. DCS Export Script - DCS World Wiki - Hoggitworld.com - Hoggit Wiki, accessed on January 15, 2026, https://wiki.hoggitworld.com/view/DCS_Export_Script
+   26. Installing Lua socket library - Stack Overflow, accessed on January 15, 2026, https://stackoverflow.com/questions/10356709/installing-lua-socket-library
+   27. Nonblocking TCP Sockets/Http Requests? - Addon Development - Windower, accessed on January 15, 2026, https://forums.windower.net/index.php@sharelink=download%3BaHR0cDovL2ZvcnVtcy53aW5kb3dlci5uZXQvaW5kZXgucGhwPy90b3BpYy8xMTI1LW5vbmJsb2NraW5nLXRjcC1zb2NrZXRzaHR0cC1yZXF1ZXN0cy8,%3BTm9uYmxvY2tpbmcgVENQIFNvY2tldHMvSHR0cCBSZXF1ZXN0cz8,.html
+   28. How do I change a TCP socket to be non-blocking? - Stack Overflow, accessed on January 15, 2026, https://stackoverflow.com/questions/1543466/how-do-i-change-a-tcp-socket-to-be-non-blocking
+   29. How do I do a non-blocking read with LuaSocket 3.1.0-1? : r/lua - Reddit, accessed on January 15, 2026, https://www.reddit.com/r/lua/comments/1ckvgap/how_do_i_do_a_nonblocking_read_with_luasocket_3101/
+   30. connection keepalive with TCP sockets in python going into infinite loop - Stack Overflow, accessed on January 15, 2026, https://stackoverflow.com/questions/40145962/connection-keepalive-with-tcp-sockets-in-python-going-into-infinite-loop
+   31. LuaSocket - non-blocking connect ?, accessed on January 15, 2026, https://lua-l.lua.narkive.com/3H22UMMO/luasocket-non-blocking-connect
+   32. dcs_scripts/Export.lua at master - GitHub, accessed on January 15, 2026, https://github.com/sprhawk/dcs_scripts/blob/master/Export.lua
+   33. Python Socket Programming: Server and Client Example Guide - DigitalOcean, accessed on January 15, 2026, https://www.digitalocean.com/community/tutorials/python-socket-programming-server-client
+   34. Client-server bidirectional communication with auto reconnect and data retransmission : r/learnpython - Reddit, accessed on January 15, 2026, https://www.reddit.com/r/learnpython/comments/1ltwmr8/clientserver_bidirectional_communication_with/
+   35. Socket Programming HOWTO — Python 3.14.2 documentation, accessed on January 15, 2026, https://docs.python.org/3/howto/sockets.html
+   36. How to read JSON from socket in python? (Incremental parsing of JSON) - Stack Overflow, accessed on January 15, 2026, https://stackoverflow.com/questions/7337523/how-to-read-json-from-socket-in-python-incremental-parsing-of-json
+   37. Export vs Hooks - How To Mod for DCS World - ED Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/230656-export-vs-hooks/
+   38. DCS Dedicated use - LotAtc, accessed on January 15, 2026, https://www.lotatc.com/documentation/server/dedicated.html
+   39. API reference (LuaSocket) - Defold, accessed on January 15, 2026, https://defold.com/ref/socket-lua/
+   40. StereoPythonics/Tcp.Framing: A framing library for network streams. - GitHub, accessed on January 15, 2026, https://github.com/StereoPythonics/Tcp.Framing
+   41. Winwing SimApp Pro + Export scripts Analysis - WINCTRL - ED Forums, accessed on January 15, 2026, https://forum.dcs.world/topic/306710-winwing-simapp-pro-export-scripts-analysis/

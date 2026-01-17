@@ -1,0 +1,54 @@
+[
+    {
+        "id": 1,
+        "name": "Dis/Engage Auto Pilot",
+        "x": -1.4546983273919547,
+        "y": 2.9892257007400325,
+        "z": -2.391332973569318,
+        "dist_cm": 85.0,
+        "action": "LoSetCommand(0);",
+        "desc": "Description",
+        "action_type": "app",
+        "action_val": "engageAP"
+    },
+    {
+        "id": 2,
+        "name": "Switch_2",
+        "x": 1.4917391871772694,
+        "y": -1.6856049905810453,
+        "z": 1.0786705086009387,
+        "dist_cm": 60.0,
+        "action": "LoSetCommand(0);",
+        "desc": "Description"
+    },
+    {
+        "id": 3,
+        "name": "Switch_3",
+        "x": 0.4434149784490984,
+        "y": -0.6048308018954243,
+        "z": 0.3104750764055576,
+        "dist_cm": 60.0,
+        "action": "LoSetCommand(0);",
+        "desc": "Description"
+    },
+    {
+        "id": 4,
+        "name": "Switch_4",
+        "x": -0.5755989548005469,
+        "y": 2.3028969790927176,
+        "z": 1.7157793437336732,
+        "dist_cm": 60.0,
+        "action": "LoSetCommand(0);",
+        "desc": "Description"
+    },
+    {
+        "id": 5,
+        "name": "Switch_5",
+        "x": -2.201077161115016,
+        "y": 0.5708929150809244,
+        "z": 1.5775226550586612,
+        "dist_cm": 60.0,
+        "action": "LoSetCommand(0);",
+        "desc": "Description"
+    }
+]
