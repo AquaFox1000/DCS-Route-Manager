@@ -6,3 +6,4 @@ node_modules/
 __pycache__/
 RouteManagerExport backup.lua
 Literature/
+backups/
