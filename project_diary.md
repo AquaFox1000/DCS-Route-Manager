@@ -21,3 +21,9 @@ This document tracks the evolution of the project. A new entry should be added b
 - Created MASTER_PLAN.md for task tracking.
 - Created smart-undo.ps1 for emergency reverts.
 - Created CLEANUP_NOTES.md.
+  - **Backup Created**: [2026-01-17_1643] (.\backups\Backup_2026-01-17_1643.zip)
+### [2026-01-17] Constitution Refinement
+**Tags**: #config #rules #quality #performance
+- Added protocols for Quality Control, Self-Correction, and Human Verification.
+- Added Performance Constraints for DCS World context.
+- Clarified 'No Autopilot' rules.
