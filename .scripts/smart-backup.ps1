@@ -13,6 +13,9 @@ git commit -m "Auto-backup: Task Completed [$timestamp]"
 if (!(Test-Path $backupDir)) { New-Item -ItemType Directory -Path $backupDir | Out-Null }
 $zipName = "$backupDir\Backup_$timestamp.zip"
 Write-Host "Zipping to $zipName..."
-Compress-Archive -Path "$projectPath\*" -DestinationPath $zipName -Force
+
+# Exclude backups folder itself and other heavy/junk folders
+$exclude = @("backups", "bad backups", "local backups", "node_modules", ".git", ".vs", ".vscode")
+Get-ChildItem -Path $projectPath -Exclude $exclude | Compress-Archive -DestinationPath $zipName -Force
 
 Write-Host "Backup Complete."
