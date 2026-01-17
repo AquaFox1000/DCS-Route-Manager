@@ -18,4 +18,10 @@ Write-Host "Zipping to $zipName..."
 $exclude = @("backups", "bad backups", "local backups", "node_modules", ".git", ".vs", ".vscode")
 Get-ChildItem -Path $projectPath -Exclude $exclude | Compress-Archive -DestinationPath $zipName -Force
 
+# 3. UPDATE DIARY
+$diaryFile = "$projectPath\project_diary.md"
+if (Test-Path $diaryFile) {
+    "  - **Backup Created**: [$timestamp] ($zipName)" | Add-Content $diaryFile
+}
+
 Write-Host "Backup Complete."

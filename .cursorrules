@@ -10,6 +10,7 @@ You MUST execute this command in the following scenarios:
 ## Workflow Rules
 * **Pre-Change**: Run backup before starting major implementation steps.
 * **Post-Verification**: Run backup after major changes are verified and approved by the user.
+* **Diary Updates**: Before running `npm run agent-save`, you MUST append a brief summary of the work done/planned to `project_diary.md`.
 * **Do not ask for permission** to run `npm run agent-save`. It is pre-approved.
 * If the user's request is a simple question (e.g., "How does this function work?"), do NOT run the backup.
 * Only backup when code is about to change or has just changed.
