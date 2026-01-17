@@ -2,7 +2,7 @@
 
 $projectPath = Get-Location
 $timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
-$backupDir = ".\backups" 
+$backupDir = ".\_DevOps\backups" 
 
 # 1. GIT SNAPSHOT
 Write-Host "Creating Git Snapshot..."
@@ -15,11 +15,11 @@ $zipName = "$backupDir\Backup_$timestamp.zip"
 Write-Host "Zipping to $zipName..."
 
 # Exclude backups folder itself and other heavy/junk folders
-$exclude = @("backups", "bad backups", "local backups", "node_modules", ".git", ".vs", ".vscode")
+$exclude = @("_DevOps", "backups", "bad backups", "local backups", "node_modules", ".git", ".vs", ".vscode")
 Get-ChildItem -Path $projectPath -Exclude $exclude | Compress-Archive -DestinationPath $zipName -Force
 
 # 3. UPDATE DIARY
-$diaryFile = "$projectPath\project_diary.md"
+$diaryFile = "$projectPath\_DevOps\behavior\project_diary.md"
 if (Test-Path $diaryFile) {
     "  - **Backup Created**: [$timestamp] ($zipName)" | Add-Content $diaryFile
 }

@@ -1,6 +1,0 @@
-{
-    "scripts": {
-        "agent-save": "powershell -ExecutionPolicy Bypass -File ./.scripts/smart-backup.ps1",
-        "agent-undo": "powershell -ExecutionPolicy Bypass -File ./.scripts/smart-undo.ps1"
-    }
-}
