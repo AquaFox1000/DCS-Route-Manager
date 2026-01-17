@@ -9,6 +9,7 @@ echo ".DS_Store" >> .gitignore
 echo "*.log" >> .gitignore
 echo "__pycache__/" >> .gitignore
 echo "RouteManagerExport backup.lua" >> .gitignore
+echo "Literature/" >> .gitignore
 
 # Copy external Lua files
 # Create target directories if they don't exist
