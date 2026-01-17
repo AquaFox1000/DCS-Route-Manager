@@ -1,0 +1,5 @@
+{
+    "scripts": {
+        "agent-save": "powershell -ExecutionPolicy Bypass -File ./.scripts/smart-backup.ps1"
+    }
+}

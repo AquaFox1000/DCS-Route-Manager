@@ -1,0 +1,15 @@
+# SAFETY PROTOCOLS
+
+## Automatic Backup Trigger
+You have permission to execute the command `npm run agent-save`.
+
+You MUST execute this command in the following scenarios:
+1.  **Implementation Approval:** Immediately after the user says "Go ahead", "Proceed", or "Yes" to a proposed implementation plan, BEFORE you start writing the code (Prior to major changes).
+2.  **User Approved Task Completion:** Immediately AFTER the user confirms the task is satisfactory (e.g., "Looks good", "Done") and changes have passed testing.
+
+## Workflow Rules
+* **Pre-Change**: Run backup before starting major implementation steps.
+* **Post-Verification**: Run backup after major changes are verified and approved by the user.
+* **Do not ask for permission** to run `npm run agent-save`. It is pre-approved.
+* If the user's request is a simple question (e.g., "How does this function work?"), do NOT run the backup.
+* Only backup when code is about to change or has just changed.
