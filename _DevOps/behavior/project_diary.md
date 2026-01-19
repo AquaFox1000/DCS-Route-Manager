@@ -28,3 +28,13 @@ This document tracks the evolution of the project. A new entry should be added b
 - Added Performance Constraints for DCS World context.
 - Clarified 'No Autopilot' rules.
   - **Backup Created**: [2026-01-17_1644] (.\backups\Backup_2026-01-17_1644.zip)
+### [2026-01-17] Workspace Cleanup
+**Tags**: #cleanup #structure #devops
+- Created '_DevOps' folder structure.
+- Moved scripts, backups, and behavioral files to '_DevOps'.
+- Hidden root config files (.cursorrules, etc).
+- Updated paths in package.json and .cursorrules.
+### [2026-01-17] Added Raycast.lua
+**Tags**: #file #lua #setup
+- Added Raycast.lua to Scripts folder.
+- Updated setup_git.ps1 to include Raycast.lua.

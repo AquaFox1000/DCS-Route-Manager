@@ -22,6 +22,9 @@ Copy-Item -Path "$env:USERPROFILE\Saved Games\DCS.openbeta\Scripts\RouteManagerE
 # Copy RouteManagerHook.lua
 Copy-Item -Path "$env:USERPROFILE\Saved Games\DCS.openbeta\Scripts\Hooks\RouteManagerHook.lua" -Destination "Scripts\Hooks\RouteManagerHook.lua" -Force
 
+# Copy Raycast.lua
+Copy-Item -Path "$env:USERPROFILE\Saved Games\DCS.openbeta\Scripts\Raycast.lua" -Destination "Scripts\Raycast.lua" -Force
+
 # Stage all your current files
 git add .
 

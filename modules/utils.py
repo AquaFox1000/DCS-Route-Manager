@@ -1,18 +1,76 @@
 import math
+import time
+
+# --- SAFETY WRAPPERS ---
+def safe_sqrt(val):
+    if val < 0: return 0.0
+    return math.sqrt(val)
+
+def safe_asin(val):
+    if val < -1.0: return -1.570796 # -PI/2
+    if val > 1.0: return 1.570796  # PI/2
+    return math.asin(val)
+
+class PIDController:
+    def __init__(self, kp, ki, kd, output_limits=(-1.0, 1.0), integral_limit=1.0):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.min_out, self.max_out = output_limits
+        self.integral_limit = integral_limit
+        
+        self._integral = 0.0
+        self._prev_error = 0.0
+        self._last_time = time.time()
+        
+    def reset(self):
+        self._integral = 0.0
+        self._prev_error = 0.0
+        self._last_time = time.time()
+        
+    def update(self, error, dt=None):
+        current_time = time.time()
+        if dt is None:
+            dt = current_time - self._last_time
+            if dt <= 0: dt = 0.02
+        self._last_time = current_time
+
+        # 1. Proportional
+        p_out = self.kp * error
+        
+        # 2. Integral
+        self._integral += error * dt
+        self._integral = max(-self.integral_limit, min(self.integral_limit, self._integral))
+        i_out = self.ki * self._integral
+        
+        # 3. Derivative
+        derivative = (error - self._prev_error) / dt
+        d_out = self.kd * derivative
+        
+        self._prev_error = error
+        
+        output = p_out + i_out + d_out
+        
+        # 4. Safety Clamp (Output)
+        if math.isnan(output) or math.isinf(output):
+            return 0.0 # Fail Safe
+            
+        return max(self.min_out, min(self.max_out, output))
 
 class MathUtils:
     @staticmethod
-    def get_rotation_matrix(heading, pitch, bank):
+    def get_rotation_matrix(heading_deg, pitch_deg, bank_deg):
         """
         Creates a 3x3 Rotation Matrix (Body -> World) for DCS.
+        Input: Degrees (Standard DCS Telemetry)
         Sequence: Ry(Heading) * Rz(Pitch) * Rx(Bank)
         DCS Axes: X=North, Y=Up, Z=East
         """
-        # 1. Inputs
+        # 1. Convert to Radians (Fixing Bug: math.cos expects rads)
         # Negate heading because DCS is Clockwise, Math is Counter-Clockwise
-        h = -heading
-        p = pitch
-        b = bank
+        h = math.radians(-heading_deg)
+        p = math.radians(pitch_deg)
+        b = math.radians(bank_deg)
         
         ch, sh = math.cos(h), math.sin(h)
         cp, sp = math.cos(p), math.sin(p)
@@ -36,12 +94,51 @@ class MathUtils:
         r21 = ch * sb + sh * sp * cb
         r22 = ch * cb - sh * sp * sb
 
-        # Return as Rows
         return [
             [r00, r01, r02],
             [r10, r11, r12],
             [r20, r21, r22]
         ]
+
+    # --- GEODESIC MATH (Moved from NavComputer) ---
+    @staticmethod
+    def get_great_circle_data(lat1_deg, lon1_deg, lat2_deg, lon2_deg):
+        R = 3440.065 # Earth Radius in NM
+        
+        lat1 = math.radians(lat1_deg)
+        lon1 = math.radians(lon1_deg)
+        lat2 = math.radians(lat2_deg)
+        lon2 = math.radians(lon2_deg)
+        
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        
+        # Haversine Distance
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.atan2(safe_sqrt(a), safe_sqrt(1-a))
+        dist_nm = R * c
+        
+        # Initial Bearing
+        y = math.sin(dlon) * math.cos(lat2)
+        x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+        brg = (math.degrees(math.atan2(y, x)) + 360) % 360
+        
+        return dist_nm, brg
+
+    @staticmethod
+    def get_cross_track_error(my_lat, my_lon, start_lat, start_lon, end_lat, end_lon):
+        dist_total, course_brg = MathUtils.get_great_circle_data(start_lat, start_lon, end_lat, end_lon)
+        dist_to_plane, brg_to_plane = MathUtils.get_great_circle_data(start_lat, start_lon, my_lat, my_lon)
+        
+        angle_diff = math.radians(brg_to_plane - course_brg)
+        
+        # Cross Track Distance (NM)
+        # xtk = asin(sin(dist/R) * sin(angle)) * R
+        # R = 3440.065
+        R = 3440.065
+        xtk_nm = safe_asin(math.sin(dist_to_plane / R) * math.sin(angle_diff)) * R
+        
+        return xtk_nm, course_brg
 
     # --- VECTOR HELPERS ---
     @staticmethod
@@ -89,6 +186,7 @@ class MathUtils:
         p = plane_hpb.get('pitch', 0)
         b = plane_hpb.get('roll', plane_hpb.get('bank', 0))
 
+        # FIX: pass degrees directly, now handled by new method
         rot_matrix = MathUtils.get_rotation_matrix(h, p, b)
         
         # Rotate to Body Frame

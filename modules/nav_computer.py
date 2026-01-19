@@ -1,47 +1,6 @@
-# nav_computer.py
 import math
-import time 
-
-class PIDController:
-    def __init__(self, kp, ki, kd, output_limits=(-1.0, 1.0), integral_limit=1.0):
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        self.min_out, self.max_out = output_limits
-        self.integral_limit = integral_limit
-        
-        self._integral = 0.0
-        self._prev_error = 0.0
-        self._last_time = time.time()
-        
-    def reset(self):
-        self._integral = 0.0
-        self._prev_error = 0.0
-        self._last_time = time.time()
-        
-    def update(self, error, dt=None):
-        current_time = time.time()
-        if dt is None:
-            dt = current_time - self._last_time
-            if dt <= 0: dt = 0.02
-        self._last_time = current_time
-
-        # Proportional
-        p_out = self.kp * error
-        
-        # Integral
-        self._integral += error * dt
-        self._integral = max(-self.integral_limit, min(self.integral_limit, self._integral))
-        i_out = self.ki * self._integral
-        
-        # Derivative
-        derivative = (error - self._prev_error) / dt
-        d_out = self.kd * derivative
-        
-        self._prev_error = error
-        
-        output = p_out + i_out + d_out
-        return max(self.min_out, min(self.max_out, output))
+import time
+from modules.utils import PIDController, MathUtils
 
 class NavComputer:
     def __init__(self):
@@ -53,6 +12,7 @@ class NavComputer:
         self.auto_sequence = True
         self.ap_engaged = False 
 
+        # Terrain Following State
         self.tf_state = {
             "last_rad_alt": None,
             "last_time": 0,
@@ -67,7 +27,6 @@ class NavComputer:
         # --- LIMITS ---
         self.max_pitch_cmd = 20.0 
         self.max_bank_cmd = 45.0  
-        self.alt_gain_p = 0.15 
 
     def reset_pids(self):
         self.roll_pid.reset()
@@ -101,28 +60,264 @@ class NavComputer:
         self.active_wp_index = (self.active_wp_index + direction) % len(self.route)
         return self.active_wp_index
 
-    def get_great_circle_data(self, lat1, lon1, lat2, lon2):
-        R = 3440.065 
-        dlat = math.radians(lat2 - lat1)
-        dlon = math.radians(lon2 - lon1)
-        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-        dist = R * c
+    # --- MAIN CALCULATION LOOP ---
+    def calculate(self, telemetry, map_settings):
+        if self.active_wp_index < 0 or self.active_wp_index >= len(self.route): 
+            return None
         
-        y = math.sin(dlon) * math.cos(math.radians(lat2))
-        x = math.cos(math.radians(lat1)) * math.sin(math.radians(lat2)) - math.sin(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.cos(dlon)
-        brg = (math.degrees(math.atan2(y, x)) + 360) % 360
-        return dist, brg
+        # 1. UNPACK & VALIDATE (Forward Check)
+        t = self._unpack_telemetry(telemetry)
+        if not t: 
+            return None # Sensor Fail or Not Ready
 
-    def get_cross_track_error(self, my_lat, my_lon, start_lat, start_lon, end_lat, end_lon):
-        dist_total, course_brg = self.get_great_circle_data(start_lat, start_lon, end_lat, end_lon)
-        dist_to_plane, brg_to_plane = self.get_great_circle_data(start_lat, start_lon, my_lat, my_lon)
-        angle_diff = math.radians(brg_to_plane - course_brg)
-        xtk_nm = math.asin(math.sin(dist_to_plane / 3440.065) * math.sin(angle_diff)) * 3440.065
-        return xtk_nm, course_brg
+        tgt = self.route[self.active_wp_index]
 
-    def calculate_terrain_slope_cmd(self, target_agl_m, current_rad_alt_m, plane_vvi_ms):
-        """ NOE Logic: Returns Commanded VS based on Terrain Slope """
+        # 2. LATERAL GUIDANCE
+        lat_res = self._guidance_lateral(t, tgt, map_settings)
+        
+        # 3. VERTICAL GUIDANCE
+        vert_res = self._guidance_vertical(t, tgt)
+        
+        # 4. SEQUENCING
+        did_seq = self._check_sequencing(t, tgt, lat_res['dist_nm'], map_settings)
+
+        # 5. PID CONTROL & SAFETY (Back Check)
+        steer_cmd = self._calculate_steering(t, lat_res['cmd_bank'], vert_res['cmd_pitch'])
+
+        return {
+            "index": self.active_wp_index,
+            "dist": lat_res['dist_nm'],
+            "brg": lat_res['brg_to_tgt'],
+            "turn": lat_res['hdg_err'],
+            "ete": (lat_res['dist_nm'] / (t['spd'] * 0.000539957) * 3600) if t['spd'] > 1 else 0,
+            "name": tgt.get('name', f'WP {self.active_wp_index+1}'),
+            "lat": tgt['lat'], "lon": tgt['lon'], "alt": vert_res['display_alt_m'], 
+            "type": tgt.get('type', 'wp'), "sequenced": did_seq,
+            "fd_bank": lat_res['cmd_bank'] - t['roll'], 
+            "fd_pitch": vert_res['cmd_pitch'] - t['pitch'],
+            "req_bank": lat_res['cmd_bank'], 
+            "req_pitch": vert_res['cmd_pitch'],
+            "pid_roll_out": steer_cmd['roll_out'], 
+            "pid_pitch_out": steer_cmd['pitch_out'],
+            "ap_status": self.ap_engaged, 
+            "ap_cmd": steer_cmd['ap_commands'],
+            "ap_mode": lat_res['mode_str'],
+            "alt_mode": vert_res['mode_str'],
+            "xte": lat_res['xtk_nm'],
+            "debug": {
+                "mode": vert_res['mode_str'],
+                "tgt_alt_m": tgt.get('alt', 0),
+                "rad_alt_m": t['rad_alt'],
+                "cmd_pitch": vert_res['cmd_pitch']
+            }
+        }
+
+    # --- SUB-SYSTEMS ---
+
+    def _unpack_telemetry(self, telemetry):
+        try:
+            # Safely cast to float. Default to 0 if missing.
+            # Check for NaN/Inf (Sensor Safety)
+            t = {}
+            for k in ['lat', 'lon', 'hdg', 'alt_r', 'roll', 'pitch', 'spd', 'aoa', 'vvi', 'alt_baro']:
+                val = float(telemetry.get(k, 0))
+                if math.isnan(val) or math.isinf(val):
+                    return None # Data integrity fail
+                t[k] = val
+            
+            # Map keys to internal names
+            return {
+                'lat': t['lat'], 'lon': t['lon'],
+                'hdg': t['hdg'], 'rad_alt': t['alt_r'],
+                'roll': t['roll'], 'pitch': t['pitch'],
+                'spd': t['spd'], 'aoa': t['aoa'],
+                'vvi': t['vvi'], 'baro': t['alt_baro']
+            }
+        except Exception:
+            return None
+
+    def _guidance_lateral(self, t, tgt, map_settings):
+        use_course_line = map_settings.get('navCourseLine', False)
+        
+        # Great Circle to Target
+        dist_nm, brg_to_tgt = MathUtils.get_great_circle_data(t['lat'], t['lon'], tgt['lat'], tgt['lon'])
+        
+        target_bearing_cmd = brg_to_tgt 
+        xtk_nm = 0.0
+        mode_str = "Homing"
+
+        if use_course_line:
+            mode_str = "Course Line"
+            if self.prev_wp_location:
+                p_lat, p_lon = self.prev_wp_location
+                xtk_nm, course_brg = MathUtils.get_cross_track_error(t['lat'], t['lon'], p_lat, p_lon, tgt['lat'], tgt['lon'])
+                
+                # Intercept Logic (Max 45 deg cut)
+                intercept_angle = max(-45.0, min(45.0, xtk_nm * -40.0))
+                target_bearing_cmd = (course_brg + intercept_angle + 360) % 360
+            else:
+                target_bearing_cmd = brg_to_tgt
+
+        # Heading Error
+        hdg_err = (target_bearing_cmd - t['hdg'] + 360) % 360
+        if hdg_err > 180: hdg_err -= 360
+        
+        # Bank Command Calculation
+        speed_mps = t['spd'] if t['spd'] > 10 else 10
+        # Dynamic Scaling creates smoother turns at high speed
+        speed_scaling = min(1.2, max(0.4, 150.0 / speed_mps))
+        self.roll_pid.kp = self.base_roll_kp * speed_scaling
+
+        base_bank = hdg_err * 2.5 
+        cmd_bank = max(-self.max_bank_cmd, min(self.max_bank_cmd, base_bank))
+
+        return {
+            'dist_nm': dist_nm,
+            'brg_to_tgt': brg_to_tgt,
+            'hdg_err': hdg_err,
+            'xtk_nm': xtk_nm,
+            'cmd_bank': cmd_bank,
+            'mode_str': mode_str
+        }
+
+    def _guidance_vertical(self, t, tgt):
+        raw_tgt_alt_m = float(tgt.get('alt', 0))
+        tgt_alt_type = tgt.get('altType', 'MSL')
+        is_noe_eligible = (tgt.get('type') == 'wp') and (tgt_alt_type == 'AGL') and (raw_tgt_alt_m < 1500)
+        
+        cmd_pitch = 0.0
+        display_alt_m = raw_tgt_alt_m
+        mode_str = "BARO"
+        
+        min_pitch = -self.max_pitch_cmd
+        max_pitch = self.max_pitch_cmd
+
+        if is_noe_eligible:
+            # === NOE MODE ===
+            display_alt_m = raw_tgt_alt_m
+            min_pitch = -10.0; max_pitch = 25.0
+
+            if t['rad_alt'] < 1500:
+                mode_str = "NOE_ACTIVE"
+                req_vs = self._calculate_terrain_slope_cmd(raw_tgt_alt_m, t['rad_alt'], t['vvi'])
+                vvi_error = req_vs - t['vvi']
+                cmd_pitch = (vvi_error * 0.5) + t['aoa']
+            else:
+                mode_str = "NOE_SEARCH"
+                target_vs = (raw_tgt_alt_m - t['baro']) * 0.5
+                target_vs = max(-30.0, min(30.0, target_vs))
+                cmd_pitch = ((target_vs - t['vvi']) * 0.5) + t['aoa']
+        else:
+            # === BARO MODE ===
+            flight_alt_m = raw_tgt_alt_m
+            if tgt.get('type') in ['tgt', 'poi']:
+                 flight_alt_m = self.prev_wp_alt if self.prev_wp_alt is not None else t['baro']
+            
+            display_alt_m = flight_alt_m
+            alt_error = flight_alt_m - t['baro']
+            
+            # Dampening
+            damped_vvi = 0.0
+            if abs(t['vvi']) > 1.0:
+                sign = 1.0 if t['vvi'] > 0 else -1.0
+                damped_vvi = (abs(t['vvi']) - 1.0) * sign
+            
+            effective_error = alt_error - (damped_vvi * 5.0)
+            if abs(effective_error) < 5.0: effective_error = 0.0
+
+            target_vs = max(-90.0, min(90.0, effective_error * 0.5))
+            cmd_pitch = ((target_vs - t['vvi']) * 0.5) + t['aoa']
+
+        # Stall Protection / Energy Recovery Logic
+        spd_kmh = t['spd'] * 3.6
+        if self.ap_engaged:
+            if spd_kmh < 300: # Energy Recovery
+                cmd_pitch = -5.0 # Nose down
+                mode_str = "STALL_RECOVERY"
+            elif spd_kmh < 350 and cmd_pitch > 0: # Authority Limiter
+                 ratio = (spd_kmh - 300) / 50.0
+                 cmd_pitch = cmd_pitch * ratio
+
+        # Final Clamp
+        cmd_pitch = max(min_pitch, min(max_pitch, cmd_pitch))
+
+        return {
+            'cmd_pitch': cmd_pitch,
+            'display_alt_m': display_alt_m,
+            'mode_str': mode_str
+        }
+
+    def _check_sequencing(self, t, tgt, dist_nm, map_settings):
+        if not self.auto_sequence: return False
+        
+        should_seq = False
+        use_course_line = map_settings.get('navCourseLine', False)
+        
+        if tgt.get('type') in ['tgt', 'poi']:
+            # Fly-over Logic (Dot Product)
+            # Todo: use MathUtils here too for consistency if needed
+            # For now, simple lat/lon logic is fine for short range sequencing
+            d_lat_t = tgt['lat'] - t['lat']
+            d_lon_t = tgt['lon'] - t['lon']
+            
+            if self.prev_wp_location:
+                 track_lat = tgt['lat'] - self.prev_wp_location[0]
+                 track_lon = tgt['lon'] - self.prev_wp_location[1]
+            else:
+                 rad_hdg = math.radians(t['hdg'])
+                 track_lat = math.cos(rad_hdg)
+                 track_lon = math.sin(rad_hdg)
+            
+            dot_prod = (d_lat_t * track_lat) + (d_lon_t * track_lon)
+            if dot_prod <= 0: should_seq = True
+        else:
+            # Radius Logic
+            tol = 0.5 if use_course_line else 0.27
+            if dist_nm < tol: should_seq = True
+
+        if should_seq:
+            self.cycle_waypoint(1)
+            return True
+        return False
+
+    def _calculate_steering(self, t, cmd_bank, cmd_pitch):
+        ap_commands = []
+        
+        # 1. PID Update
+        roll_out = self.roll_pid.update(cmd_bank - t['roll'])
+        pitch_out = self.pitch_pid.update(cmd_pitch - t['pitch'])
+
+        # 2. Output Validation (Safety Back Track)
+        if math.isnan(roll_out) or math.isnan(pitch_out) or math.isinf(roll_out) or math.isinf(pitch_out):
+            self.disengage_ap()
+            return {'roll_out': 0, 'pitch_out': 0, 'ap_commands': ["SAFETY_RESET"]}
+
+        # 3. Disengage Checks
+        if self.ap_engaged:
+            # Extreme Attitude Check
+            if abs(t['roll']) > 60 or abs(t['pitch']) > 35:
+                self.disengage_ap()
+                ap_commands.append("SAFETY_RESET")
+            
+            # Speed Check
+            elif (t['spd'] * 3.6) < 260:
+                self.disengage_ap()
+                ap_commands.append("STALL_DISENGAGE")
+            
+            else:
+                # Generate Stick Commands
+                if abs(roll_out) > 0.05:
+                    ap_commands.append("ROLL_RIGHT" if roll_out > 0 else "ROLL_LEFT")
+                if abs(pitch_out) > 0.05:
+                    ap_commands.append("PITCH_UP" if pitch_out > 0 else "PITCH_DOWN")
+
+        return {
+            'roll_out': roll_out,
+            'pitch_out': pitch_out,
+            'ap_commands': ap_commands
+        }
+
+    def _calculate_terrain_slope_cmd(self, target_agl_m, current_rad_alt_m, plane_vvi_ms):
         ALPHA = 0.15      
         KP = 1.0          
         DEADZONE = 5.0    
@@ -147,7 +342,7 @@ class NavComputer:
 
         terrain_slope = plane_vvi_ms - smoothed_rate
         error = target_agl_m - current_rad_alt_m
-
+        
         err_corr = 0.0
         if abs(error) > DEADZONE:
             sign = 1 if error > 0 else -1
@@ -155,261 +350,7 @@ class NavComputer:
 
         cmd_vs = terrain_slope + err_corr
 
-        if error > 0: 
-            cmd_vs = max(0.0, cmd_vs)
-        else:
-            cmd_vs = max(MAX_SINK, cmd_vs)
+        if error > 0: cmd_vs = max(0.0, cmd_vs)
+        else: cmd_vs = max(MAX_SINK, cmd_vs)
 
         return cmd_vs
-
-    def calculate(self, telemetry, map_settings):
-        if self.active_wp_index < 0 or self.active_wp_index >= len(self.route): 
-            return None
-        
-        # 1. TELEMETRY
-        my_lat = float(telemetry.get('lat', 0))
-        my_lon = float(telemetry.get('lon', 0))
-        my_hdg = float(telemetry.get('hdg', 0))
-        my_rad_alt = float(telemetry.get('alt_r', 10000)) # FIXED: 'alt_r'
-        my_roll = float(telemetry.get('roll', 0))
-        my_pitch = float(telemetry.get('pitch', 0))
-        my_spd = float(telemetry.get('spd', 1)) 
-        my_aoa = float(telemetry.get('aoa', 0))
-        my_vvi = float(telemetry.get('vvi', 0))
-        my_baro = float(telemetry.get('alt_baro', 0))
-
-        tgt = self.route[self.active_wp_index]
-        tgt_type = tgt.get('type', 'wp')
-        use_course_line = map_settings.get('navCourseLine', False)
-
-        # 2. LATERAL
-        dist_nm, brg_to_tgt = self.get_great_circle_data(my_lat, my_lon, tgt['lat'], tgt['lon'])
-        target_bearing_cmd = brg_to_tgt 
-        xtk_nm = 0.0
-
-        if use_course_line:
-            if self.prev_wp_location:
-                p_lat, p_lon = self.prev_wp_location
-                xtk_nm, course_brg = self.get_cross_track_error(my_lat, my_lon, p_lat, p_lon, tgt['lat'], tgt['lon'])
-                intercept_angle = max(-45.0, min(45.0, xtk_nm * -40.0))
-                target_bearing_cmd = (course_brg + intercept_angle + 360) % 360
-            else:
-                target_bearing_cmd = brg_to_tgt
-
-        # 3. SEQUENCING
-        did_seq = False
-        if self.auto_sequence:
-            should_seq = False
-            if tgt_type in ['tgt', 'poi']:
-                d_lat_t = tgt['lat'] - my_lat
-                d_lon_t = tgt['lon'] - my_lon
-                if self.prev_wp_location:
-                    track_lat = tgt['lat'] - self.prev_wp_location[0]
-                    track_lon = tgt['lon'] - self.prev_wp_location[1]
-                else:
-                    rad_hdg = math.radians(my_hdg)
-                    track_lat = math.cos(rad_hdg)
-                    track_lon = math.sin(rad_hdg)
-                mag = math.hypot(track_lat, track_lon)
-                if mag > 0:
-                    track_lat /= mag
-                    track_lon /= mag
-                dot_prod = (d_lat_t * track_lat) + (d_lon_t * track_lon)
-                if dot_prod <= 0: should_seq = True
-            else:
-                tol = 0.5 if use_course_line else 0.27
-                if dist_nm < tol: should_seq = True
-
-            if should_seq:
-                self.cycle_waypoint(1)
-                did_seq = True
-                tgt = self.route[self.active_wp_index]
-                tgt_type = tgt.get('type', 'wp')
-                dist_nm, brg_to_tgt = self.get_great_circle_data(my_lat, my_lon, tgt['lat'], tgt['lon'])
-                target_bearing_cmd = brg_to_tgt
-
-        # 4. ALTITUDE & VERTICAL CONTROL
-        raw_tgt_alt_m = float(tgt.get('alt', 0))
-        tgt_alt_type = tgt.get('altType', 'MSL')
-        
-        is_noe_eligible = (tgt_type == 'wp') and (tgt_alt_type == 'AGL') and (raw_tgt_alt_m < 1500)
-        
-        cmd_pitch = 0.0
-        display_alt_m = 0.0
-        
-        # Pitch Safety Limits
-        min_pitch_limit = -self.max_pitch_cmd
-        max_pitch_limit = self.max_pitch_cmd
-
-        # Debug Vars
-        dbg_mode = "BARO"
-        dbg_req_vs = 0.0
-        dbg_alt_error = 0.0
-
-        if is_noe_eligible:
-            # === NOE / TERRAIN FOLLOWING MODE ===
-            target_agl_m = raw_tgt_alt_m
-            display_alt_m = target_agl_m
-            
-            # Asymmetric Clamping for NOE
-            min_pitch_limit = -10.0
-            max_pitch_limit = 25.0
-
-            if my_rad_alt < 1500:
-                # [A] ACTIVE NOE (Radar Valid)
-                dbg_mode = "NOE_ACTIVE"
-                req_vs = self.calculate_terrain_slope_cmd(target_agl_m, my_rad_alt, my_vvi)
-                
-                vvi_error = req_vs - my_vvi
-                cmd_pitch = (vvi_error * 0.5) + my_aoa
-                
-                dbg_req_vs = req_vs
-                dbg_alt_error = target_agl_m - my_rad_alt
-            
-            else:
-                # [B] SEARCH MODE (Radar Invalid)
-                # Use Barometric Fallback, but enforce NOE Pitch limits (-10 to +25)
-                dbg_mode = "NOE_SEARCH"
-                self.tf_state["smoothed_rad_rate"] = 0.0 
-                
-                # --- VELOCITY CASCADE FOR SEARCH ---
-                # 1. Calculate Target VS based on Distance
-                alt_error = raw_tgt_alt_m - my_baro
-                target_vs = alt_error * 0.5
-                
-                # 2. Clamp Target VS (Prevent Deep Dives > 30m/s)
-                target_vs = max(-30.0, min(30.0, target_vs))
-                
-                # 3. Calculate VVI Error and Pitch
-                vvi_error = target_vs - my_vvi
-                cmd_pitch = (vvi_error * 0.5) + my_aoa
-                
-                dbg_alt_error = alt_error
-                dbg_req_vs = target_vs
-
-        else:
-            # === STANDARD BAROMETRIC MODE ===
-            dbg_mode = "BARO"
-            self.tf_state = {"last_rad_alt": None, "last_time": 0, "smoothed_rad_rate": 0.0}
-            
-            flight_alt_m = raw_tgt_alt_m 
-            if tgt_type in ['tgt', 'poi']:
-                if self.prev_wp_alt is not None: flight_alt_m = self.prev_wp_alt
-                else: flight_alt_m = my_baro 
-
-            display_alt_m = flight_alt_m
-            alt_error = flight_alt_m - my_baro
-            
-            # --- ANTICIPATION & VELOCITY LOGIC ---
-            # 1. Soft Deadzone on VVI (Dampening)
-            # We ignore the first 1.0 m/s of VVI to prevent wobble.
-            # By subtracting 1.0 from the magnitude, we ensure there is no "jump"
-            # when it kicks in (it starts at 0.0 and ramps up).
-            damped_vvi = 0.0
-            if abs(my_vvi) > 1.0:
-                sign = 1.0 if my_vvi > 0 else -1.0
-                damped_vvi = (abs(my_vvi) - 1.0) * sign
-            
-            # 2. Calculate Effective Error (PD Control)
-            # We "look ahead" by 5.0 factor. If diving, this reduces the error 
-            # early, tricking the AP into leveling off gently.
-            effective_error = alt_error - (damped_vvi * 5.0)
-
-            # 3. Altitude Deadzone (Silence the stick when close)
-            if abs(effective_error) < 5.0: effective_error = 0.0
-
-            # 4. Desired Vertical Speed (The "Pull Amount")
-            # We use your requested low gain (0.5) for a gentle capture.
-            target_vs = effective_error * 0.5
-            
-            # 5. Safety Limits & Output
-            target_vs = max(-90.0, min(90.0, target_vs)) 
-            cmd_pitch = ((target_vs - my_vvi) * 0.5) + my_aoa
-            
-            dbg_alt_error = alt_error
-            dbg_req_vs = target_vs
-
-        # Final Pitch Clamp
-        cmd_pitch = max(min_pitch_limit, min(max_pitch_limit, cmd_pitch))
-
-        spd_kmh = my_spd * 3.6
-        ap_commands = [] # Ensure this list exists for later usage
-
-        if self.ap_engaged:
-            # 1. DISENGAGE (< 260 km/h)
-            if spd_kmh < 260:
-                self.ap_engaged = False
-                ap_commands.append("STALL_DISENGAGE")
-            
-            # 2. ENERGY RECOVERY (< 300 km/h)
-            elif spd_kmh < 300:
-                # Force nose down to regain energy
-                cmd_pitch = -5.0 
-                dbg_mode = "STALL_RECOVERY"
-
-            # 3. LINEAR AUTHORITY LIMIT (300 - 350 km/h)
-            elif spd_kmh < 350:
-                # If we are pitching UP, limit the authority to prevent stall
-                # 300km/h = 0% authority, 350km/h = 100% authority
-                if cmd_pitch > 0:
-                    ratio = (spd_kmh - 300) / 50.0
-                    cmd_pitch = cmd_pitch * ratio
-
-        # 6. BANK CONTROL
-        hdg_err = (target_bearing_cmd - my_hdg + 360) % 360
-        if hdg_err > 180: hdg_err -= 360
-        
-        speed_mps = my_spd if my_spd > 10 else 10
-        speed_scaling = min(1.2, max(0.4, 150.0 / speed_mps))
-        
-        base_bank = hdg_err * 2.5 
-        cmd_bank = max(-self.max_bank_cmd, min(self.max_bank_cmd, base_bank))
-        
-        self.roll_pid.kp = self.base_roll_kp * speed_scaling
-
-        # 7. PID EXECUTION
-        roll_out = 0.0
-        pitch_out = 0.0
-        ap_commands = []
-
-        if self.ap_engaged:
-            roll_err = cmd_bank - my_roll
-            roll_out = self.roll_pid.update(roll_err)
-            
-            pitch_err = cmd_pitch - my_pitch
-            pitch_out = self.pitch_pid.update(pitch_err)
-
-            if abs(my_roll) > 60 or abs(my_pitch) > 35:
-                self.ap_engaged = False
-                ap_commands.append("SAFETY_RESET")
-            else:
-                if abs(roll_out) > 0.05:
-                    ap_commands.append("ROLL_RIGHT" if roll_out > 0 else "ROLL_LEFT")
-                if abs(pitch_out) > 0.05:
-                    ap_commands.append("PITCH_UP" if pitch_out > 0 else "PITCH_DOWN")
-
-        return {
-            "index": self.active_wp_index,
-            "dist": dist_nm,
-            "brg": brg_to_tgt,
-            "turn": hdg_err,
-            "ete": (dist_nm / (my_spd * 0.000539957) * 3600) if my_spd > 1 else 0,
-            "name": tgt.get('name', f'WP {self.active_wp_index+1}'),
-            "lat": tgt['lat'], "lon": tgt['lon'], "alt": display_alt_m, 
-            "type": tgt_type, "sequenced": did_seq,
-            "fd_bank": cmd_bank - my_roll, "fd_pitch": cmd_pitch - my_pitch,
-            "req_bank": cmd_bank, "req_pitch": cmd_pitch,
-            "pid_roll_out": roll_out, "pid_pitch_out": pitch_out,
-            "ap_status": self.ap_engaged, "ap_cmd": ap_commands,
-            "ap_mode": "Course Line" if use_course_line else "Homing",
-            "alt_mode": dbg_mode,
-            "xte": xtk_nm,
-            "debug": {
-                "mode": dbg_mode,
-                "tgt_alt_m": raw_tgt_alt_m,
-                "rad_alt_m": my_rad_alt,
-                "alt_error": dbg_alt_error,
-                "req_vs": dbg_req_vs,
-                "cmd_pitch": cmd_pitch
-            }
-        }

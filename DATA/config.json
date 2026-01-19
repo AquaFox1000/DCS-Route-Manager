@@ -11,7 +11,7 @@
         "cycle_prev": "ctrl+alt+n",
         "restore_route": "ctrl+alt+r",
         "engageAP": "ctrl+shift+a",
-        "interact": "left_click",
+        "interact": "",
         "test_single_1": "",
         "test_single_2": "",
         "test_single_3": "",
@@ -22,7 +22,7 @@
         "test_single_7": "",
         "test_single_8": "",
         "test_single_9": "",
-        "mark_click_point": "ctrl+shift+alt+m"
+        "mark_click_point": ""
     },
     "joystick": {
         "cycle_next": [
@@ -38,6 +38,13 @@
             "Throttle - HOTAS Warthog",
             0,
             false
+        ],
+        "restore_route": [
+            "",
+            0,
+            "",
+            0,
+            false
         ]
     },
     "test_ids": {
@@ -51,6 +58,5 @@
         "test_single_10": 97,
         "test_single_8": 200,
         "test_single_9": 215
-    },
-    "clickable_dist": 85
+    }
 }
