@@ -53,10 +53,6 @@ let html5QrCode = null; let pendingImportData = null; let activeInputId = null;
 let followMode = true; let headingUp = false;
 let planeMarker = null;
 
-// --- API KEYS ---
-const apiKey_Thunderforest = '6072325a7dae4cefa200e61b9c60be7e';
-const apiKey_MapTiler = '09u7MKuifUr11zqRXqZv';
-
 // --- LAYERS & MAP STATE ---
 // Re-added missing initialization
 const map = L.map('map', {
@@ -78,67 +74,10 @@ layers['vfr'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
 layers['vfr_night'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, className: 'invert-map' });
 layers['relief'] = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}', { maxZoom: 13 });
 
-// Thunderforest Base Maps
-layers['tf_landscape'] = L.tileLayer(`https://{s}.tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey=${apiKey_Thunderforest}`, { maxZoom: 22 });
-layers['tf_outdoors'] = L.tileLayer(`https://{s}.tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey=${apiKey_Thunderforest}`, { maxZoom: 22 });
-
-
 // Set Default Layer
 layers['dark'].addTo(map);
 
 let overlayLayers = {};
-// Initialize Overlay Layers (Restored Legacy)
-// Initialize Overlay Layers
-// labels: Stamen Toner Labels (Raster currently works better for heavy labels than simplified vector)
-overlayLayers['labels'] = L.tileLayer(`https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png`, { maxZoom: 20, zIndex: 600 });
-// roads: MapTiler Toner Lines (Raster) - User requested Black/Grey. Removing invert.
-overlayLayers['roads'] = L.tileLayer(`https://api.maptiler.com/maps/toner-lines/256/{z}/{x}/{y}.png?key=${apiKey_MapTiler}`, { maxZoom: 20, zIndex: 500, className: 'road-overlay' });
-
-// contours: Vector Tiles (PBF) using Leaflet.VectorGrid
-// STYLE: Thin orange/brown lines for elevation
-const contourStyle = {
-    color: '#673c0cff',
-    weight: 0.2,
-    opacity: 0.6,
-    fill: false
-};
-overlayLayers['contours'] = L.vectorGrid.protobuf(`https://api.maptiler.com/tiles/contours-v2/{z}/{x}/{y}.pbf?key=${apiKey_MapTiler}`, {
-    rendererFactory: L.canvas.tile,
-    vectorTileLayerStyles: {
-        'contour': contourStyle,
-        'contour_ft': contourStyle
-    },
-    interactive: false,
-    zIndex: 450,
-    maxNativeZoom: 14
-});
-
-// buildings: Vector Tiles (PBF)
-const buildingStyle = {
-    color: '#333',
-    weight: 0.5,
-    fillColor: '#555',
-    fillOpacity: 0.4,
-    fill: true
-};
-overlayLayers['buildings'] = L.vectorGrid.protobuf(`https://api.maptiler.com/tiles/buildings/{z}/{x}/{y}.pbf?key=${apiKey_MapTiler}`, {
-    rendererFactory: L.canvas.tile,
-    vectorTileLayerStyles: {
-        'building': buildingStyle,
-        'building_part': buildingStyle
-    },
-    interactive: false,
-    zIndex: 460,
-    maxNativeZoom: 16
-});
-
-
-// urban: Mundialis WMS with Tactical Filter - Increased Opacity
-overlayLayers['urban'] = L.tileLayer.wms('http://ows.mundialis.de/services/service?', { layers: 'OSM-Overlay-WMS', format: 'image/png', transparent: true, opacity: 0.7, className: 'tactical-overlay' });
-
-// NEW LAYERS
-overlayLayers['hillshade'] = L.tileLayer(`https://api.maptiler.com/tiles/hillshade/{z}/{x}/{y}.png?key=${apiKey_MapTiler}`, { opacity: 0.6, zIndex: 300 });
-
 let activeOverlays = { 'contours': false, 'urban': false, 'roads': true, 'labels': true };
 // Initialize Overlay Layers
 let airportLayer = L.layerGroup().addTo(map);
@@ -273,13 +212,11 @@ function setMapLayer(name, skipSave = false) {
         if (!skipSave && typeof saveMapSettings === 'function') saveMapSettings();
     }
     document.getElementById('map-menu').classList.remove('show');
-    document.querySelectorAll('.menu-item').forEach(el => {
-        if (el.dataset.layer === name) {
-            el.classList.add('active');
-        } else if (el.dataset.layer) {
-            // Only remove active if it's a map layer button (has data-layer)
-            // This prevents interfering with overlays if they share this class
-            el.classList.remove('active');
+    document.querySelectorAll('.menu-item span').forEach(el => {
+        if (el.parentElement.getAttribute('onclick') && el.parentElement.getAttribute('onclick').includes(name)) {
+            el.parentElement.classList.add('active');
+        } else if (!el.parentElement.id.includes('btn-ov')) {
+            el.parentElement.classList.remove('active');
         }
     });
 }

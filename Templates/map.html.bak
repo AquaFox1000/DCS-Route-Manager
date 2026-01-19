@@ -38,7 +38,6 @@
 
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet.vectorgrid@latest/dist/Leaflet.VectorGrid.bundled.js"></script>
     <script src="https://unpkg.com/@joergdietrich/leaflet.terminator/L.Terminator.js"></script>
     <script src="https://unpkg.com/milsymbol@2.0.0/dist/milsymbol.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -55,23 +54,6 @@
         /* Inverted Mode for Light Maps -> Dark */
         .invert-map {
             filter: invert(100%) hue-rotate(180deg) brightness(var(--map-br, 1.0)) contrast(var(--map-con, 1.0)) opacity(var(--map-op, 1.0)) !important;
-        }
-
-        /* TACTICAL OVERLAY STYLES */
-        .tactical-overlay {
-            filter: grayscale(100%) invert(100%) opacity(0.6) brightness(0.8) !important;
-        }
-
-        /* White Lines on Transparent BG (Inverts Black on Transparent) */
-        .invert-overlay {
-            filter: invert(100%) opacity(0.8) !important;
-        }
-
-        /* Roads: Invert (Black->White) + Screen (Remove Black BG) = Light Grey Lines */
-        .road-overlay {
-            filter: invert(100%);
-            mix-blend-mode: screen !important;
-            opacity: 0.6 !important;
         }
 
         /* --- DYNAMIC NVG MODES --- */
@@ -2256,24 +2238,15 @@
 
     <div class="popup-menu" id="map-menu">
         <div style="font-size:10px; color:#777; padding:0 5px; text-transform:uppercase;">Base Map</div>
-        <button class="menu-item" onclick="setMapLayer('dark')" data-layer="dark"><span>Tactical (Dark)</span></button>
-        <button class="menu-item" onclick="setMapLayer('opentopo')" data-layer="opentopo"><span>Military
-                Topo</span></button>
-        <button class="menu-item" onclick="setMapLayer('sat')" data-layer="sat"><span>Satellite</span></button>
-        <button class="menu-item" onclick="setMapLayer('cyclosm')" data-layer="cyclosm"><span>Detailed
-                Topo</span></button>
-        <button class="menu-item" onclick="setMapLayer('light')" data-layer="light"><span>Street (Light)</span></button>
-        <button class="menu-item" onclick="setMapLayer('darkstreet')" data-layer="darkstreet"><span>Street
-                (Dark)</span></button>
-        <button class="menu-item" onclick="setMapLayer('vfr')" data-layer="vfr"><span>VFR Chart (Day)</span></button>
-        <button class="menu-item" onclick="setMapLayer('vfr_night')" data-layer="vfr_night"><span>VFR Chart
-                (Night)</span></button>
-        <button class="menu-item" onclick="setMapLayer('tf_landscape')" data-layer="tf_landscape"><span>TF
-                Landscape</span></button>
-        <button class="menu-item" onclick="setMapLayer('tf_outdoors')" data-layer="tf_outdoors"><span>TF
-                Outdoors</span></button>
-        <button class="menu-item" onclick="setMapLayer('relief')" data-layer="relief"><span>Terrain
-                Relief</span></button>
+        <button class="menu-item" onclick="setMapLayer('dark')"><span>Tactical (Dark)</span></button>
+        <button class="menu-item" onclick="setMapLayer('opentopo')"><span>Military Topo</span></button>
+        <button class="menu-item" onclick="setMapLayer('sat')"><span>Satellite</span></button>
+        <button class="menu-item" onclick="setMapLayer('cyclosm')"><span>Detailed Topo</span></button>
+        <button class="menu-item" onclick="setMapLayer('light')"><span>Street (Light)</span></button>
+        <button class="menu-item" onclick="setMapLayer('darkstreet')"><span>Street (Dark)</span></button>
+        <button class="menu-item" onclick="setMapLayer('vfr')"><span>VFR Chart (Day)</span></button>
+        <button class="menu-item" onclick="setMapLayer('vfr_night')"><span>VFR Chart (Night)</span></button>
+        <button class="menu-item" onclick="setMapLayer('relief')"><span>Terrain Relief</span></button>
 
         <div style="border-top:1px solid #444; margin:5px 0;"></div>
         <div style="font-size:10px; color:#777; padding:0 5px; text-transform:uppercase;">Layer Overlays</div>
@@ -2281,17 +2254,11 @@
         <button class="menu-item" id="btn-ov-urban" onclick="toggleOverlay('urban')">
             <span>Urban Areas</span><input type="checkbox" class="overlay-chk" id="chk-ov-urban">
         </button>
-        <button class="menu-item" id="btn-ov-buildings" onclick="toggleOverlay('buildings')">
-            <span>Buildings</span><input type="checkbox" class="overlay-chk" id="chk-ov-buildings">
-        </button>
         <button class="menu-item" id="btn-ov-roads" onclick="toggleOverlay('roads')">
             <span>Road Network</span><input type="checkbox" class="overlay-chk" id="chk-ov-roads">
         </button>
         <button class="menu-item" id="btn-ov-contours" onclick="toggleOverlay('contours')">
             <span>Contours (Elev)</span><input type="checkbox" class="overlay-chk" id="chk-ov-contours">
-        </button>
-        <button class="menu-item" id="btn-ov-hillshade" onclick="toggleOverlay('hillshade')">
-            <span>Hillshade</span><input type="checkbox" class="overlay-chk" id="chk-ov-hillshade">
         </button>
         <button class="menu-item" id="btn-ov-labels" onclick="toggleOverlay('labels')">
             <span>Text Labels</span><input type="checkbox" class="overlay-chk" id="chk-ov-labels">
