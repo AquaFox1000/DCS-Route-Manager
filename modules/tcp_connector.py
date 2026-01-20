@@ -179,6 +179,12 @@ class DCSHookClient:
              print(f"👤 Metadata: Player={data.get('player_name')}, Unit={data.get('unit_name')}")
              if self.callback_func: self.callback_func('metadata', data)
              
+        elif msg_type == "phonebook":
+             data = msg.get("data", {})
+             count = len(data) if data else 0
+             print(f"📞 Phonebook: {count} players")
+             if self.callback_func: self.callback_func('phonebook', data)
+             
         elif msg_type == "theater_state":
              data = msg.get("data", {})
              count = len(data) if data else 0

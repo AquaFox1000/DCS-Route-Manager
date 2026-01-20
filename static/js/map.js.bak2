@@ -53,6 +53,10 @@ let html5QrCode = null; let pendingImportData = null; let activeInputId = null;
 let followMode = true; let headingUp = false;
 let planeMarker = null;
 
+// --- API KEYS ---
+const apiKey_Thunderforest = '6072325a7dae4cefa200e61b9c60be7e';
+const apiKey_MapTiler = '09u7MKuifUr11zqRXqZv';
+
 // --- LAYERS & MAP STATE ---
 // Re-added missing initialization
 const map = L.map('map', {
@@ -69,16 +73,73 @@ layers['light'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{
 layers['opentopo'] = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17 });
 layers['sat'] = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
 layers['cyclosm'] = L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: 20 });
-layers['darkstreet'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }); // Fallback
+layers['darkstreet'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20, className: 'invert-map' }); // Voyager (Streets) + Invert
 layers['vfr'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }); // Placeholder
-layers['vfr_night'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }); // Placeholder
+layers['vfr_night'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, className: 'invert-map' });
 layers['relief'] = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}', { maxZoom: 13 });
+
+// Thunderforest Base Maps
+layers['tf_landscape'] = L.tileLayer(`https://{s}.tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey=${apiKey_Thunderforest}`, { maxZoom: 22 });
+layers['tf_outdoors'] = L.tileLayer(`https://{s}.tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey=${apiKey_Thunderforest}`, { maxZoom: 22 });
+
 
 // Set Default Layer
 layers['dark'].addTo(map);
 
 let overlayLayers = {};
-let activeOverlays = { 'contours': false, 'urban': false, 'roads': true, 'labels': true };
+// Initialize Overlay Layers (Restored Legacy)
+// Initialize Overlay Layers
+// labels: Stamen Toner Labels (Raster currently works better for heavy labels than simplified vector)
+overlayLayers['labels'] = L.tileLayer(`https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png`, { maxZoom: 20, zIndex: 600 });
+// roads: MapTiler Toner Lines (Raster) - User requested Black/Grey. Removing invert.
+overlayLayers['roads'] = L.tileLayer(`https://api.maptiler.com/maps/toner-lines/256/{z}/{x}/{y}.png?key=${apiKey_MapTiler}`, { maxZoom: 20, zIndex: 500, className: 'road-overlay' });
+
+// contours: Vector Tiles (PBF) using Leaflet.VectorGrid
+// STYLE: Thin orange/brown lines for elevation
+const contourStyle = {
+    color: '#673c0cff',
+    weight: 0.2,
+    opacity: 0.6,
+    fill: false
+};
+overlayLayers['contours'] = L.vectorGrid.protobuf(`https://api.maptiler.com/tiles/contours-v2/{z}/{x}/{y}.pbf?key=${apiKey_MapTiler}`, {
+    rendererFactory: L.canvas.tile,
+    vectorTileLayerStyles: {
+        'contour': contourStyle,
+        'contour_ft': contourStyle
+    },
+    interactive: false,
+    zIndex: 450,
+    maxNativeZoom: 14
+});
+
+// buildings: Vector Tiles (PBF)
+const buildingStyle = {
+    color: '#333',
+    weight: 0.5,
+    fillColor: '#555',
+    fillOpacity: 0.4,
+    fill: true
+};
+overlayLayers['buildings'] = L.vectorGrid.protobuf(`https://api.maptiler.com/tiles/buildings/{z}/{x}/{y}.pbf?key=${apiKey_MapTiler}`, {
+    rendererFactory: L.canvas.tile,
+    vectorTileLayerStyles: {
+        'building': buildingStyle,
+        'building_part': buildingStyle
+    },
+    interactive: false,
+    zIndex: 460,
+    maxNativeZoom: 16
+});
+
+
+// urban: Mundialis WMS with Tactical Filter - Increased Opacity
+overlayLayers['urban'] = L.tileLayer.wms('http://ows.mundialis.de/services/service?', { layers: 'OSM-Overlay-WMS', format: 'image/png', transparent: true, opacity: 0.7, className: 'tactical-overlay' });
+
+// NEW LAYERS
+overlayLayers['hillshade'] = L.tileLayer(`https://api.maptiler.com/tiles/hillshade/{z}/{x}/{y}.png?key=${apiKey_MapTiler}`, { opacity: 0.6, zIndex: 300 });
+
+let activeOverlays = { 'contours': false, 'urban': false, 'roads': true, 'labels': true, 'buildings': false, 'hillshade': false };
 // Initialize Overlay Layers
 let airportLayer = L.layerGroup().addTo(map);
 let unitLayer = L.layerGroup().addTo(map);
@@ -192,19 +253,33 @@ function setMapLayer(name, skipSave = false) {
     // Consolidated from monkey-patch
     // FIX: Apply filters BEFORE saving, so we save the *current* state of the new layer, 
     // instead of saving the *previous* layer's state relative to the new layer name.
-    applyVisualFilters();
+    // Consolidated from monkey-patch
+    // FIX: Apply filters BEFORE saving - functionality moved to sync block below
+    // applyVisualFilters();
 
     if (layers[name]) {
         layers[name].addTo(map);
         currentMapLayerName = name;
+
+        // FIX: Sync Sliders with new Layer Settings
+        if (typeof filterSettings !== 'undefined' && filterSettings.map) {
+            // Ensure defaults exist
+            if (!filterSettings.map[name]) filterSettings.map[name] = { br: 1.0, con: 1.0, op: 1.0 };
+
+            // Apply Filters via Centralized Function
+            applyVisualFilters();
+        }
+
         if (!skipSave && typeof saveMapSettings === 'function') saveMapSettings();
     }
     document.getElementById('map-menu').classList.remove('show');
-    document.querySelectorAll('.menu-item span').forEach(el => {
-        if (el.parentElement.getAttribute('onclick') && el.parentElement.getAttribute('onclick').includes(name)) {
-            el.parentElement.classList.add('active');
-        } else if (!el.parentElement.id.includes('btn-ov')) {
-            el.parentElement.classList.remove('active');
+    document.querySelectorAll('.menu-item').forEach(el => {
+        if (el.dataset.layer === name) {
+            el.classList.add('active');
+        } else if (el.dataset.layer) {
+            // Only remove active if it's a map layer button (has data-layer)
+            // This prevents interfering with overlays if they share this class
+            el.classList.remove('active');
         }
     });
 }
@@ -1199,7 +1274,7 @@ socket.on('map_settings_update', function (data) {
         if (data.visuals.opacity) { document.documentElement.style.setProperty('--map-op', data.visuals.opacity); }
 
         // Update sliders if they exist
-        const safeSet = (id, val) => { const el = document.getElementById(id); if (el) el.value = val * 100; };
+        const safeSet = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
         safeSet('sld-map-br', data.visuals.brightness);
         safeSet('sld-map-con', data.visuals.contrast);
         safeSet('sld-map-op', data.visuals.opacity);
@@ -1324,15 +1399,32 @@ async function loadMapSettings() {
         const localScale = localStorage.getItem('dcs_map_ui_scale'); if (localScale) { document.getElementById('opt-ui-scale').value = localScale; applyUiScale(localScale); }
         if (data.layer && layers[data.layer]) setMapLayer(data.layer);
         if (data.threatFill !== undefined) { document.getElementById('sld-threat-fill').value = data.threatFill; updateThreatFill(data.threatFill); }
-        if (data.overlays) { for (const [key, isActive] of Object.entries(data.overlays)) { if (isActive) toggleOverlay(key, true); } }
+        if (data.overlays) { for (const [key, isActive] of Object.entries(data.overlays)) { toggleOverlay(key, isActive); } }
         if (data.vis) {
             setCheckboxAndLayer('chk-vis-air', airportLayer, data.vis.airports);
             setCheckboxAndLayer('chk-vis-unit', unitLayer, data.vis.units);
-            const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = (val !== undefined ? val : true); };
+            const setChk = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.checked = (val !== undefined ? val : true);
+                    // Sync Parent Label Class (Unit Types)
+                    if (el.parentElement.classList.contains('layer-toggle-btn')) {
+                        el.parentElement.classList.toggle('active', el.checked);
+                    }
+                }
+            };
             setChk('chk-vis-unit-air', data.vis.units_air); setChk('chk-vis-unit-ground', data.vis.units_ground);
             setChk('chk-vis-unit-naval', data.vis.units_naval); setChk('chk-vis-unit-static', data.vis.units_static);
             setChk('chk-vis-unit-red', data.vis.units_red); setChk('chk-vis-unit-blue', data.vis.units_blue);
             setChk('chk-vis-unit-neutral', data.vis.units_neutral);
+
+            // Sync Coalition Buttons (Separate IDs)
+            const syncCoalitionBtn = (side) => {
+                const btn = document.getElementById(`btn-vis-${side}`);
+                const chk = document.getElementById(`chk-vis-unit-${side}`);
+                if (btn && chk) btn.classList.toggle('active', chk.checked);
+            };
+            syncCoalitionBtn('red'); syncCoalitionBtn('blue'); syncCoalitionBtn('neutral');
             setChk('chk-live-air', data.vis.liveAir); // Sync Live Air
             setCheckboxAndLayer('chk-vis-poi', poiLayer, data.vis.pois !== undefined ? data.vis.pois : true);
             const threatChk = document.getElementById('chk-vis-threats'); if (threatChk) threatChk.checked = (data.vis.threats !== undefined ? data.vis.threats : true);
@@ -1374,7 +1466,7 @@ async function loadMapSettings() {
                 }
 
                 // Ensure current layer is roughly in sync with saved 'visuals' as a fallback
-                if (!filterSettings.map[currentMapLayerName]) filterSettings.map[currentMapLayerName] = {};
+                if (!filterSettings.map[currentMapLayerName]) filterSettings.map[currentMapLayerName] = { br: 1.0, con: 1.0, op: 1.0 };
                 const t = filterSettings.map[currentMapLayerName];
 
                 // HELPER: Sanitize values that might have been saved as 0-100 scales due to previous bug
@@ -1386,8 +1478,7 @@ async function loadMapSettings() {
                     return v;
                 };
 
-                // If date.visuals is present, it represents the state at save time.
-                // We should respect it for the current layer.
+                // If date.visuals is present, sync it to the current layer's memory
                 if (data.visuals.brightness) t.br = sanitize(data.visuals.brightness, 2.0);
                 if (data.visuals.contrast) t.con = sanitize(data.visuals.contrast, 2.0);
                 if (data.visuals.opacity) t.op = sanitize(data.visuals.opacity, 1.0);
@@ -1403,16 +1494,8 @@ async function loadMapSettings() {
                 }
             }
 
-            // Note: Sliders updated via onchange or separate mechanism? 
-            // If sliders exist, update them. FIX: Do NOT multiply by 100 (Active Tuning uses floats)
-            const safeVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-            // Use sanitized values from 't' (current layer) for the initial slider set
-            safeVal('sld-map-br', filterSettings.map[currentMapLayerName].br);
-            safeVal('sld-map-con', filterSettings.map[currentMapLayerName].con);
-            safeVal('sld-map-op', filterSettings.map[currentMapLayerName].op);
-
-            // Force UI update to reflect values
-            updateSliderUI('map', filterSettings.map[currentMapLayerName]);
+            // Finally, Apply All Visuals (Map + NVG)
+            applyVisualFilters();
         }
 
         // Apply Colors Immediately
@@ -1695,7 +1778,7 @@ function drawMeasureLine(start, end, isFinal, isRemote = false) {
 function createPoi(lat, lon, name, isUserPos) {
     if (!activeMissionName && !isUserPos) { showToast("Select Mission First"); return; }
     const color = isUserPos ? '#00ff00' : '#ffff00'; const label = isUserPos ? "My Pos" : (name || "Mark"); const sidc = isUserPos ? "SFGPU-------" : "SHGPU-------";
-    allPois.push({ lat, lon, name: label, color: color, sidc: sidc }); renderPois(); setClickMode('none'); if (!isUserPos) saveActiveMission(); if (activeMissionName) renderBrowserList();
+    allPois.push({ lat, lon, name: label, color: color, sidc: sidc }); renderPois(); setClickMode('none'); if (!isUserPos) saveActiveMission(); if (activeMissionName) renderBrowserList(); renderPoiList();
 }
 function renderPois() {
     poiLayer.clearLayers(); threatLayer.clearLayers();
@@ -1745,9 +1828,9 @@ function savePoiEdit() {
     allPois[activePoiIndex].threatDetect = tDetect; allPois[activePoiIndex].threatDeadly = tDeadly; allPois[activePoiIndex].threatDetectEnabled = document.getElementById('chk-poi-threat-detect').checked; allPois[activePoiIndex].threatDeadlyEnabled = document.getElementById('chk-poi-threat-deadly').checked;
     if (tDetect > 0) lastThreatDetect = tDetect; if (tDeadly > 0) lastThreatDeadly = tDeadly;
     if (selectedPoiSidcPartial !== 'PIN') { const aff = document.getElementById('poi-affil').value; let dim = 'G'; if (selectedPoiSidcPartial.startsWith('M')) dim = 'A'; if (selectedPoiSidcPartial.startsWith('N')) dim = 'S'; finalSidc = `S${aff}${dim}P${selectedPoiSidcPartial}`; if (aff === 'H') color = '#e74c3c'; else if (aff === 'F') color = '#3498db'; else if (aff === 'N') color = '#2ecc71'; else color = '#f1c40f'; }
-    allPois[activePoiIndex].name = name; allPois[activePoiIndex].color = color; allPois[activePoiIndex].sidc = finalSidc; closePoiModal(); renderPois(); saveActiveMission(); renderBrowserList();
+    allPois[activePoiIndex].name = name; allPois[activePoiIndex].color = color; allPois[activePoiIndex].sidc = finalSidc; closePoiModal(); renderPois(); saveActiveMission(); renderBrowserList(); renderPoiList();
 }
-function deletePoi() { if (activePoiIndex === -1) return; allPois.splice(activePoiIndex, 1); closePoiModal(); renderPois(); saveActiveMission(); renderBrowserList(); }
+function deletePoi() { if (activePoiIndex === -1) return; allPois.splice(activePoiIndex, 1); closePoiModal(); renderPois(); saveActiveMission(); renderBrowserList(); renderPoiList(); }
 function closePoiModal() { document.getElementById('poi-modal').style.display = 'none'; if (typeof closeKeyboard === 'function') closeKeyboard(); activePoiIndex = -1; }
 
 const poiPresets = [{ label: "SAM-L", code: "UCDS--", det: 45, dead: 30, desc: "Long Range SAM" }, { label: "SAM-M", code: "UCDM--", det: 25, dead: 18, desc: "Med Range SAM" }, { label: "SAM-S", code: "UCDT--", det: 8, dead: 5, desc: "Short Range SAM" }, { label: "AAA", code: "UCDG--", det: 4, dead: 2, desc: "AAA" }, { label: "MANPAD", code: "UCIM--", det: 4, dead: 2.5, desc: "Manpad" }, { label: "Armor", code: "UCA---", det: 0, dead: 2, desc: "Tank" }, { label: "Recon", code: "UCR---", det: 0, dead: 0, desc: "Recon" }, { label: "Arty", code: "UCF---", det: 0, dead: 15, desc: "Arty" }, { label: "SCUD", code: "UCFM--", det: 0, dead: 60, desc: "SCUD" }, { label: "Inf", code: "UCI---", det: 0, dead: 0.5, desc: "Inf" }, { label: "Ship", code: "IBN---", det: 60, dead: 30, desc: "Naval" }, { label: "Util", code: "UCV---", det: 0, dead: 0, desc: "Utility" }, { label: "Fighter", code: "MF----", det: 40, dead: 20, desc: "Fighter" }, { label: "Helo", code: "MH----", det: 10, dead: 5, desc: "Helis" }, { label: "Pin", code: "PIN", det: 0, dead: 0, desc: "Marker" }];
@@ -1909,6 +1992,17 @@ socket.on('tactical', function (packet) {
         else { let icon; try { if (typeof ms !== 'undefined') { const sym = new ms.Symbol(sidc, { size: 20, colorMode: "Light" }).asCanvas(); icon = L.divIcon({ className: 'tac-icon', html: `<img src="${sym.toDataURL()}" style="width:100%; height:100%;">`, iconSize: [28, 28], iconAnchor: [14, 14] }); } else { throw new Error("No Milsymbol"); } } catch (e) { icon = L.divIcon({ className: 'tac-icon', html: `<div style="width:10px; height:10px; background:red;"></div>`, iconSize: [10, 10] }); } const m = L.marker([u.lat, u.lon], { icon: icon, zIndexOffset: 100 }).addTo(unitLayer).bindTooltip(`Unit ${u.id}`); tacticalUnits[u.id] = { marker: m, updated: true }; }
     });
     for (let id in tacticalUnits) { if (!tacticalUnits[id].updated) { unitLayer.removeLayer(tacticalUnits[id].marker); delete tacticalUnits[id]; } }
+});
+socket.on('visual_target_added', function (poi) {
+    if (!poi) return;
+    allPois.push(poi);
+    renderPois();
+    if (activeMissionName) {
+        saveActiveMission();
+        renderBrowserList();
+        renderPoiList();
+    }
+    showToast("Visual Target Added: " + poi.name);
 });
 socket.on('apply_settings', (data) => { });
 

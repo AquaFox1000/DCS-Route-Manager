@@ -1,6 +1,5 @@
 // DCS Route Manager - Map Logic
 // Refactored from map.html
-console.log("map.js loaded");
 // Socket initialized in map.html
 
 
@@ -37,26 +36,45 @@ function LatLongFromMGRSstring(a) {
 // --- GLOBAL VARIABLES ---
 let settings = { coords: 'latlon', altUnit: 'ft', distUnit: 'nm', defAlt: 20000 };
 let missions = {};
-const dcsMaps = ["Caucasus", "Nevada", "Normandy", "PersianGulf", "TheChannel", "Syria", "Marianas", "SouthAtlantic", "Sinai", "Kola", "Afghanistan", "Iraq"];
+let dcsMaps = ["Caucasus", "Persian Gulf", "Nevada", "Normandy", "Syria", "Marianas", "South Atlantic", "Sinai", "Kola", "Afghanistan"];
 let activeMissionName = null;
-let allSavedRoutes = {}; let activeRouteName = null; let activeRouteData = []; let activeWpIndex = -1;
-let editingRouteName = null; let editingRouteData = []; let visibleRoutes = new Set();
-let lastTelemetry = null; let clickMode = 'none'; let wpCounter = 1; let autoSeq = true;
-let distMode = false, distStart = null; let hudMode = 0; let extHudWindow = null;
-let tacticalUnits = {}; let theaterUnits = {}; let showWpLabels = false;
-let allPois = []; let activePoiIndex = -1; let activeEditIndex = -1; let currentMapLayerName = 'dark';
-let lastThreatDetect = 0; let lastThreatDeadly = 0; let threatFillOpacity = 0.2;
+let allSavedRoutes = {};
+let allPois = [];
+let activeRouteName = null;
+let activeRouteData = [];
+let activeWpIndex = -1;
+let activeEditIndex = -1;
+let wpCounter = 1;
+let editingRouteName = "";
+let editingRouteData = [];
+let showWpLabels = false;
+let visibleRoutes = new Set();
+let clickMode = 'none';
+let distMode = false;
+let distStart = null;
+let activePoiIndex = -1;
 let selectedPoiSidcPartial = 'PIN';
-// Removed duplicate declarations
-
-let mapMoveTimer = null; let isProgrammaticMove = false; let allAirportsData = {};
-let html5QrCode = null; let pendingImportData = null; let activeInputId = null;
 let followMode = true; let headingUp = false;
 let planeMarker = null;
+let lastTelemetry = null;
+let theaterUnits = {};
+let tacticalUnits = {};
+let phonebook = {}; // Unit ID → Player Name mapping
+let pendingImportData = null;
+let activeInputId = null;
+let mapMoveTimer = null;
+let isProgrammaticMove = false;
+let autoSeq = true;
+let hudMode = 0;
+let extHudWindow = null;
+let currentMapLayerName = 'dark';
+let lastThreatDetect = 0;
+let lastThreatDeadly = 0;
+threatFillOpacity = 0.2;
 
 // --- API KEYS ---
 const apiKey_Thunderforest = '6072325a7dae4cefa200e61b9c60be7e';
-const apiKey_MapTiler = '09u7MKuifUr11zqRXqZv';
+const apiKey_MapTiler = '9BuMXBfiB423LWz8K4LP';
 
 // --- LAYERS & MAP STATE ---
 // Re-added missing initialization
@@ -519,7 +537,7 @@ function setNightVision(mode) {
 function toggleFullScreen() {
     if (!document.fullscreenElement) {
         document.documentElement.requestFullscreen().catch(err => {
-            console.log('Error enabling full-screen mode:', err.message);
+            console.error('Error enabling full-screen mode:', err.message);
         });
     } else {
         if (document.exitFullscreen) document.exitFullscreen();
@@ -551,14 +569,14 @@ async function requestWakeLock() {
     if ('wakeLock' in navigator) {
         try {
             wakeLock = await navigator.wakeLock.request('screen');
-            wakeLock.addEventListener('release', () => console.log('Wake Lock released'));
+            wakeLock.addEventListener('release', () => console.debug('Wake Lock released'));
         } catch (err) {
             console.error(err.name, err.message);
             const chk = document.getElementById('chk-opt-wakelock');
             if (chk) chk.checked = false;
         }
     } else {
-        console.log('Wake Lock API not supported');
+        console.warn('Wake Lock API not supported');
     }
 }
 async function releaseWakeLock() { if (wakeLock !== null) { await wakeLock.release(); wakeLock = null; } }
@@ -1302,7 +1320,7 @@ window.addEventListener('load', () => Scratchpad.init());
 
 // --- SETTINGS & SYNC HANDLERS ---
 socket.on('map_settings_update', function (data) {
-    console.log("Settings Update Received", data);
+    console.debug("Settings Update Received", data);
     if (!data) return;
 
     // 1. Sync Logic (Non-Visual)
@@ -1397,7 +1415,7 @@ socket.on('map_settings_update', function (data) {
 });
 
 socket.on('routes_library_update', function (data) {
-    console.log("Library Update Received");
+    console.debug("Library Update Received");
     const firstKey = Object.keys(data)[0];
     const isOldFormat = firstKey && data[firstKey].points;
     if (isOldFormat) missions["Default Mission"].routes = data; else missions = data;
@@ -1956,7 +1974,24 @@ map.on('mousemove', function (e) { if (distMode && distStart) { drawMeasureLine(
 map.on('click', async function (e) { if (distMode) { if (!distStart) { distStart = e.latlng; measureLayer.clearLayers(); L.circleMarker(distStart, { radius: 4, color: '#6C0E42' }).addTo(measureLayer); } else { drawMeasureLine(distStart, e.latlng, true); distStart = null; } return; } if (clickMode === 'poi') { createPoi(e.latlng.lat, e.latlng.lng, "Mark", false); return; } if (clickMode === 'wp' || clickMode === 'tgt') { let userInput = parseFloat(document.getElementById('global-alt').value) || 0; let altMeters = fromDisplayAlt(userInput); let altType = document.getElementById('global-alt-type').value; if (clickMode === 'tgt') { const groundMeters = await getGroundElevation(e.latlng.lat, e.latlng.lng); altMeters = Math.round(groundMeters); altType = 'MSL'; } addPoint(e.latlng.lat, e.latlng.lng, altMeters, altType, clickMode); } });
 function scheduleViewSave() { if (isProgrammaticMove) return; if (mapMoveTimer) clearTimeout(mapMoveTimer); mapMoveTimer = setTimeout(() => { saveMapSettings(); }, 1000); }
 map.on('moveend', () => { scheduleViewSave(); updateGrid(); updateMgrsGrid(); });
-map.on('zoomend', () => { scheduleViewSave(); updateGrid(); updateMgrsGrid(); });
+map.on('zoomend', () => {
+    scheduleViewSave();
+    updateGrid();
+    updateMgrsGrid();
+    // Re-render theater units with new zoom-dependent sizing
+    if (theaterUnits && Object.keys(theaterUnits).length > 0) {
+        const zoom = map.getZoom();
+        for (let id in theaterUnits) {
+            const unitData = theaterUnits[id];
+            if (unitData && unitData.marker) {
+                // Trigger re-render by removing and recreating markers
+                // This will be handled by the next theater_state update
+                // For now, just mark for update
+                unitData.needsUpdate = true;
+            }
+        }
+    }
+});
 
 // --- AIRPORTS & SOCKETS ---
 map.createPane('stationPane'); map.getPane('stationPane').style.zIndex = 550;
@@ -1979,28 +2014,400 @@ function updateAirportStatus() {
 }
 async function loadAirports() { try { const res = await fetch('/api/airports'); allAirportsData = await res.json(); renderAirports(); } catch (e) { console.log("Airport load failed:", e); } }
 
+// --- SOCKET EVENT HANDLERS ---
+
+// Phonebook: Player roster updates (Unit ID → Player Name)
+socket.on('phonebook', function (data) {
+    console.log("📞 PHONEBOOK UPDATE:");
+    console.log("  Player count:", Object.keys(data).length);
+
+    phonebook = data;
+
+    // Log each player
+    for (let unitId in data) {
+        console.log(`  Unit ${unitId}: ${data[unitId]}`);
+    }
+});
+
+// Theater State: Position/status updates for all units
 socket.on('theater_state', function (data) {
     if (!data) return;
-    console.log("THEATER STATE RX. Count:", data.length);
-    if (data.length > 0) console.log("Sample Unit:", data[0]);
-    const isLiveAirports = document.getElementById('chk-live-air') ? document.getElementById('chk-live-air').checked : false; for (let id in theaterUnits) theaterUnits[id].updated = false;
+
+    // Debug logging with separation
+    console.log("=".repeat(60));
+    console.log("🎭 THEATER STATE UPDATE:");
+    console.log("  Unit count:", data.length);
+    if (data.length > 0) {
+        console.log("  Sample unit:", data[0]);
+        console.log("  Fields:", Object.keys(data[0]));
+    }
+
+    // Debug: Check for human players
+    const humanUnits = data.filter(u => phonebook.hasOwnProperty(u.id));
+    if (humanUnits.length > 0) {
+        console.log("  Human players detected:", humanUnits.length);
+        humanUnits.forEach(u => {
+            console.log(`    Unit ${u.id} (${phonebook[u.id]}): type_level2=${u.type_level2}`);
+        });
+    }
+    console.log("=".repeat(60));
+
+    const isLiveAirports = document.getElementById('chk-live-air') ? document.getElementById('chk-live-air').checked : false;
+    const zoom = map.getZoom();
+
+    // Mark all existing units as not updated
+    for (let id in theaterUnits) {
+        theaterUnits[id].updated = false;
+    }
+
     data.forEach(u => {
-        let color = '#aaaaaa'; const isRed = (u.coalition === 1); const isBlue = (u.coalition === 2); const isNeutral = (!isRed && !isBlue);
-        const showRed = document.getElementById('chk-vis-unit-red') ? document.getElementById('chk-vis-unit-red').checked : true; const showBlue = document.getElementById('chk-vis-unit-blue') ? document.getElementById('chk-vis-unit-blue').checked : true; const showNeutral = document.getElementById('chk-vis-unit-neutral') ? document.getElementById('chk-vis-unit-neutral').checked : true; const showStatic = document.getElementById('chk-vis-unit-static') ? document.getElementById('chk-vis-unit-static').checked : true;
-        if (isRed && !showRed) return; if (isBlue && !showBlue) return; if (isNeutral && !showNeutral) return;
-        if (isRed) color = '#e74c3c'; else if (isBlue) color = '#3498db';
-        if (airportMarkers[u.name]) { if (isLiveAirports) { const mk = airportMarkers[u.name]; const iconHtml = `<i class="fa-solid fa-chess-rook" style="color:${color}; text-shadow:0 0 5px ${color};"></i>`; mk.setIcon(L.divIcon({ className: 'airport-icon', html: iconHtml, iconSize: [20, 20], iconAnchor: [10, 10] })); } return; }
+        // Coalition filtering
+        const isRed = (u.coalition === 1);
+        const isBlue = (u.coalition === 2);
+        const isNeutral = (!isRed && !isBlue);
+
+        const showRed = document.getElementById('chk-vis-unit-red') ? document.getElementById('chk-vis-unit-red').checked : true;
+        const showBlue = document.getElementById('chk-vis-unit-blue') ? document.getElementById('chk-vis-unit-blue').checked : true;
+        const showNeutral = document.getElementById('chk-vis-unit-neutral') ? document.getElementById('chk-vis-unit-neutral').checked : true;
+
+        if (isRed && !showRed) return;
+        if (isBlue && !showBlue) return;
+        if (isNeutral && !showNeutral) return;
+
+        // Determine coalition color
+        let color = '#aaaaaa';
+        if (isRed) color = '#e74c3c';
+        else if (isBlue) color = '#3498db';
+
+        // Handle airports separately (live airport coloring)
+        if (airportMarkers[u.name]) {
+            if (isLiveAirports) {
+                const mk = airportMarkers[u.name];
+                const iconHtml = `<i class="fa-solid fa-chess-rook" style="color:${color}; text-shadow:0 0 5px ${color};"></i>`;
+                mk.setIcon(L.divIcon({ className: 'airport-icon', html: iconHtml, iconSize: [20, 20], iconAnchor: [10, 10] }));
+            }
+            return;
+        }
+
         if (!u.lat || !u.long) return;
-        if (theaterUnits[u.id]) { theaterUnits[u.id].marker.setLatLng([u.lat, u.long]); theaterUnits[u.id].updated = true; }
-        else {
-            // FIX: Don't block all units if static is unchecked. Only block if we strongly suspect it is static.
-            // Since we don't have a reliable type check yet, we rely on master/ground toggles.
-            // if (!showStatic) return; 
-            const m = L.circleMarker([u.lat, u.long], { radius: 3, color: color, fillColor: color, fillOpacity: 0.8, weight: 1 }).addTo(unitLayer); m.bindTooltip(`${u.name} [${u.type}]`, { direction: 'top', offset: [0, -5], className: 'active-leg-label' }); theaterUnits[u.id] = { marker: m, updated: true };
+
+        // Determine unit category based on type_level1
+        // Level 1: 1=Air, 2=Ground, 3=Navy, 5=Static (4=Weapon, 6=Destroyed - ignored)
+        let category = 'unknown';
+        if (u.type_level1 === 1) {
+            category = 'air';
+        } else if (u.type_level1 === 2) {
+            category = 'ground';
+        } else if (u.type_level1 === 3) {
+            category = 'naval';
+        } else if (u.type_level1 === 5) {
+            category = 'static';
+        }
+
+        // Unit type filtering
+        const showAir = document.getElementById('chk-vis-unit-air') ? document.getElementById('chk-vis-unit-air').checked : true;
+        const showGround = document.getElementById('chk-vis-unit-ground') ? document.getElementById('chk-vis-unit-ground').checked : true;
+        const showNaval = document.getElementById('chk-vis-unit-naval') ? document.getElementById('chk-vis-unit-naval').checked : true;
+        const showStatic = document.getElementById('chk-vis-unit-static') ? document.getElementById('chk-vis-unit-static').checked : true;
+
+        if (category === 'air' && !showAir) return;
+        if (category === 'ground' && !showGround) return;
+        if (category === 'naval' && !showNaval) return;
+        if (category === 'static' && !showStatic) return;
+
+        // Check if this is a player (ensure ID is string to match phonebook keys)
+        const unitIdStr = String(u.id);
+        const isPlayer = phonebook.hasOwnProperty(unitIdStr);
+        const playerName = isPlayer ? phonebook[unitIdStr] : null;
+
+        // Determine rendering parameters based on zoom and category
+        let showAsDot = false;
+        let iconSize = 32; // Base size for player icons
+
+        if (isPlayer) {
+            // Player units: zoom 0-6 dots, 7-9 80%, 10+ 100% (32px base)
+            if (zoom <= 6) {
+                showAsDot = true;
+            } else if (zoom <= 9) {
+                iconSize = Math.round(32 * 0.8); // ~26px
+            } else {
+                iconSize = 32; // 100%
+            }
+        } else if (category === 'air' || category === 'naval') {
+            // AI Air/Naval: zoom 0-6 dots, 7-9 60%, 10+ 80% of base size (28px)
+            iconSize = 28;
+            if (zoom <= 6) {
+                showAsDot = true;
+            } else if (zoom <= 9) {
+                iconSize = Math.round(28 * 0.6); // ~17px
+            } else {
+                iconSize = Math.round(28 * 0.8); // ~22px
+            }
+        } else {
+            // AI Ground/Static: zoom 0-9 dots, 10-12 60%, 13+ 100%
+            iconSize = 28;
+            if (zoom <= 9) {
+                showAsDot = true;
+            } else if (zoom <= 12) {
+                iconSize = Math.round(28 * 0.6); // ~17px
+            } else {
+                iconSize = 28; // 100%
+            }
+        }
+
+        // Update or create marker
+        if (theaterUnits[u.id]) {
+            // Unit already exists, update position
+            theaterUnits[u.id].marker.setLatLng([u.lat, u.long]);
+            theaterUnits[u.id].updated = true;
+
+            // Update icon if zoom level changed (check if current marker type matches required type)
+            const currentIsDot = theaterUnits[u.id].isDot;
+            if (currentIsDot !== showAsDot || theaterUnits[u.id].iconSize !== iconSize) {
+                // Need to recreate marker with new style
+                unitLayer.removeLayer(theaterUnits[u.id].marker);
+                theaterUnits[u.id].marker = createUnitMarker(u, color, category, showAsDot, iconSize, isPlayer, playerName);
+                theaterUnits[u.id].isDot = showAsDot;
+                theaterUnits[u.id].iconSize = iconSize;
+            }
+        } else {
+            // New unit, create marker
+            const marker = createUnitMarker(u, color, category, showAsDot, iconSize, isPlayer, playerName);
+            theaterUnits[u.id] = { marker: marker, updated: true, isDot: showAsDot, iconSize: iconSize };
         }
     });
-    for (let id in theaterUnits) { if (!theaterUnits[id].updated) { if (unitLayer.hasLayer(theaterUnits[id].marker)) unitLayer.removeLayer(theaterUnits[id].marker); delete theaterUnits[id]; } }
+
+    // Remove units that were not updated (no longer in data)
+    for (let id in theaterUnits) {
+        if (!theaterUnits[id].updated) {
+            if (unitLayer.hasLayer(theaterUnits[id].marker)) {
+                unitLayer.removeLayer(theaterUnits[id].marker);
+            }
+            delete theaterUnits[id];
+        }
+    }
 });
+
+// Helper function to create unit marker based on rendering parameters
+function createUnitMarker(unit, color, category, showAsDot, iconSize, isPlayer, playerName) {
+    if (showAsDot) {
+        // Render as simple dot
+        const m = L.circleMarker([unit.lat, unit.long], {
+            radius: 2,
+            color: color,
+            fillColor: color,
+            fillOpacity: 0.8,
+            weight: 1
+        }).addTo(unitLayer);
+
+        // Simple tooltip: player name OR unit type (type_level4)
+        const labelText = isPlayer ? playerName : (unit.type_level4 || unit.name);
+        m.bindTooltip(labelText, {
+            direction: 'top',
+            offset: [0, -5],
+            className: 'active-leg-label'
+        });
+
+        return m;
+    } else {
+        // Render as icon using milsymbol
+        let icon;
+        try {
+            if (typeof ms !== 'undefined') {
+                // Determine affiliation
+                let affiliation = 'N'; // Neutral
+                if (unit.coalition === 1) affiliation = 'H'; // Hostile
+                else if (unit.coalition === 2) affiliation = 'F'; // Friendly
+
+                // Determine SIDC using type levels
+                let sidc = buildSIDC(affiliation, unit.type_level1, unit.type_level2, unit.type_level3);
+
+                const sym = new ms.Symbol(sidc, { size: iconSize, colorMode: "Light" }).asCanvas();
+                icon = L.divIcon({
+                    className: 'theater-unit-icon',
+                    html: `<img src="${sym.toDataURL()}" style="width:100%; height:100%;">`,
+                    iconSize: [iconSize, iconSize],
+                    iconAnchor: [iconSize / 2, iconSize / 2]
+                });
+            } else {
+                throw new Error("Milsymbol not available");
+            }
+        } catch (e) {
+            // Fallback to generic milsymbol (Unknown unit)
+            console.warn("Milsymbol error, using fallback:", e);
+            try {
+                const fallbackSidc = buildSIDC('N', unit.type_level1, 0, 0); // Generic unknown for the category
+                const sym = new ms.Symbol(fallbackSidc, { size: iconSize, colorMode: "Light" }).asCanvas();
+                icon = L.divIcon({
+                    className: 'theater-unit-icon',
+                    html: `<img src="${sym.toDataURL()}" style="width:100%; height:100%;">`,
+                    iconSize: [iconSize, iconSize],
+                    iconAnchor: [iconSize / 2, iconSize / 2]
+                });
+            } catch (e2) {
+                // Final fallback: Use standard marker
+                icon = L.divIcon({
+                    className: 'theater-unit-icon',
+                    html: `<div style="width:${iconSize}px; height:${iconSize}px; background:${color}; opacity:0.6; border:2px solid ${color}; border-radius:3px;"></div>`,
+                    iconSize: [iconSize, iconSize],
+                    iconAnchor: [iconSize / 2, iconSize / 2]
+                });
+            }
+        }
+
+        const m = L.marker([unit.lat, unit.long], { icon: icon, zIndexOffset: 100 }).addTo(unitLayer);
+
+        // Simple tooltip on hover: player name OR type_level4
+        const hoverLabel = isPlayer ? playerName : (unit.type_level4 || unit.name);
+        m.bindTooltip(hoverLabel, {
+            direction: 'top',
+            offset: [0, -iconSize / 2 - 5],
+            className: 'active-leg-label'
+        });
+
+        // Detailed popup on click
+        m.on('click', () => {
+            const altDisplay = Math.round(unit.alt);
+            const hdgDisplay = Math.round(unit.heading);
+
+            let popupContent = '';
+            if (isPlayer) {
+                // Player: Show player name, unit type, speed, alt, heading
+                popupContent = `<div style="min-width:150px;">
+                    <div style="font-weight:bold; color:#78aabc; font-size:13px; margin-bottom:4px;">${playerName}</div>
+                    <div style="font-size:11px;">Unit: ${unit.name}</div>
+                    <div style="font-size:11px;">Alt: ${altDisplay}m</div>
+                    <div style="font-size:11px;">Hdg: ${hdgDisplay}°</div>
+                </div>`;
+            } else {
+                // AI: Show type_level4, name, alt, heading
+                popupContent = `<div style="min-width:150px;">
+                    <div style="font-weight:bold; color:#78aabc; font-size:13px; margin-bottom:4px;">${unit.type_level4 || unit.name}</div>
+                    <div style="font-size:11px;">Name: ${unit.name}</div>
+                    <div style="font-size:11px;">Alt: ${altDisplay}m</div>
+                    <div style="font-size:11px;">Hdg: ${hdgDisplay}°</div>
+                </div>`;
+            }
+
+            L.popup()
+                .setLatLng([unit.lat, unit.long])
+                .setContent(popupContent)
+                .openOn(map);
+        });
+
+        return m;
+    }
+}
+
+// Helper function to build SIDC from type levels
+function buildSIDC(affiliation, level1, level2, level3) {
+    // SIDC format: S + Affiliation + Dimension + P + SymbolSet
+    // Based on actual DCS wsTypes.lua
+
+    // DEBUG: Log type levels for troubleshooting
+    console.log(`buildSIDC: affiliation=${affiliation}, L1=${level1}, L2=${level2}, L3=${level3}`);
+
+    let dimension = 'G'; // Ground default
+    let symbolSet = 'U-------'; // Unknown default
+
+    if (level1 === 1) {
+        // AIR - Keep it simple, use generic symbols
+        dimension = 'A';
+        if (level2 === 1) {
+            // Airplane - Just use generic fixed-wing
+            symbolSet = 'MF---------'; // Military Fixed Wing
+        } else if (level2 === 2) {
+            // Helicopter - Generic rotary wing
+            symbolSet = 'MH---------'; // Military Rotary Wing
+        } else {
+            // Unknown air
+            symbolSet = 'M----------'; // Generic Military Aircraft
+        }
+    } else if (level1 === 2) {
+        // GROUND (Corrected with actual wsTypes values)
+        dimension = 'G';
+
+        if (level2 === 17) {
+            // Tank
+            symbolSet = 'UCA--------'; // Armor/Tank (15 chars)
+        } else if (level2 === 16) {
+            // SAM - Specific by range/capability
+            if (level3 === 102) {
+                // Radar + Missile (S-300, Patriot = long range)
+                symbolSet = 'UCDL-------'; // LR SAM (15 chars)
+            } else if (level3 === 27) {
+                // Missile only (Hawk, Kub = medium range)
+                symbolSet = 'UCDM-------'; // MR SAM (15 chars)
+            } else if (level3 === 26) {
+                // Gun + Missile integrated (SA-6/Shilka, SA-8 = medium range)
+                symbolSet = 'UCDM-------'; // MR SAM (15 chars)
+            } else if (level3 === 101) {
+                // Radar only (EWR)
+                symbolSet = 'UUSR-------'; // Sensor/Radar (15 chars)
+            } else {
+                symbolSet = 'UCD--------'; // Generic AD (15 chars)
+            }
+        } else if (level2 === 8) {
+            // Moving vehicles
+            if (level3 === 27) {
+                // Mobile missiles (Avenger, Stinger)
+                symbolSet = 'UCDS-------'; // SR SAM (mobile, 15 chars)
+            } else if (level3 === 26) {
+                // Self-propelled guns (Shilka, Gepard)
+                symbolSet = 'UCDG-------'; // AAA (SP, 15 chars)
+            } else {
+                // Other vehicles (trucks, APCs)
+                symbolSet = 'UCV--------'; // Utility vehicle (15 chars)
+            }
+        } else if (level2 === 9) {
+            // Stationary structures  
+            if (level3 === 27) {
+                // Fixed missile site
+                symbolSet = 'UCDM-------'; // MR SAM (fixed, 15 chars)
+            } else if (level3 === 26) {
+                // Fixed gun
+                symbolSet = 'UCDG-------'; // AAA (fixed, 15 chars)
+            } else if (level3 === 101 || level3 === 105) {
+                // Radar
+                symbolSet = 'UUSR-------'; // Sensor/Radar (15 chars)
+            } else {
+                symbolSet = 'U----------'; // Generic static (15 chars)
+            }
+        } else if (level2 === 20) {
+            // Infantry - Check if MANPADS
+            if (level3 === 27) {
+                // Infantry with missiles (MANPADS: Stinger, Igla teams)
+                symbolSet = 'UCDS-------'; // SR SAM (MANPADS, 15 chars)
+            } else {
+                // Regular infantry
+                symbolSet = 'UCI--------'; // Infantry (15 chars)
+            }
+        } else {
+            symbolSet = 'U----------'; // Unknown ground (15 chars)
+        }
+    } else if (level1 === 3) {
+        // NAVY
+        dimension = 'S';
+        if (level2 === 12) {
+            // Ship
+            symbolSet = 'C----------'; // Combatant (15 chars)
+        } else {
+            symbolSet = 'C----------'; // Default combatant
+        }
+    } else if (level1 === 5) {
+        // STATIC
+        dimension = 'G';
+        symbolSet = 'I-------'; // Installation
+    } else {
+        // Unknown category
+        dimension = 'G';
+        symbolSet = 'U-------';
+    }
+
+    const sidc = `S${affiliation}${dimension}P${symbolSet}`;
+    console.debug(`  → Generated SIDC: ${sidc}`);
+    return sidc;
+}
 // --- TELEMETRY LOOP ---
 let telemetryLoopRunning = false;
 let latestTelemetryCheck = null;
@@ -2036,7 +2443,7 @@ function updateTelemetryVisuals() {
                     const sym = new ms.Symbol("SFAPMF----", { size: 24, colorMode: "Light" }).asCanvas();
                     iconHtml = `<img src="${sym.toDataURL()}" id="my-jet" style="width:100%; height:100%;">`;
                 }
-            } catch (e) { console.log("Error creating ownship symbol", e); }
+            } catch (e) { console.error("Error creating ownship symbol", e); }
 
             var planeIcon = L.divIcon({ className: 'plane-icon', html: iconHtml, iconSize: [32, 32], iconAnchor: [16, 16] });
             planeMarker = L.marker([data.lat, data.lon], { icon: planeIcon, zIndexOffset: 1000 }).addTo(map);
@@ -2123,14 +2530,17 @@ const layoutObserver = new ResizeObserver(entries => { for (let entry of entries
 const bottomBarEl = document.getElementById('bottom-bar'); if (bottomBarEl) layoutObserver.observe(bottomBarEl);
 
 // --- DATA CARTRIDGE ---
-function closeModal(type) { document.getElementById(`modal-${type}`).style.display = 'none'; if (type === 'import' && html5QrCode && html5QrCode.isScanning) { html5QrCode.stop().then(() => { html5QrCode.clear(); }).catch(err => console.log("Stop failed", err)); } }
+function closeModal(type) { document.getElementById(`modal-${type}`).style.display = 'none'; if (type === 'import' && html5QrCode && html5QrCode.isScanning) { html5QrCode.stop().then(() => { html5QrCode.clear(); }).catch(err => console.error("Stop failed", err)); } }
 function openShareModal() { const select = document.getElementById('share-mission-select'); select.innerHTML = ""; Object.keys(missions).forEach(key => { const opt = document.createElement('option'); opt.value = key; opt.innerText = key; if (key === activeMissionName) opt.selected = true; select.appendChild(opt); }); document.getElementById('modal-share').style.display = 'flex'; document.getElementById('qr-result-area').style.display = 'none'; updateShareList(); }
 function updateShareList() { const missionName = document.getElementById('share-mission-select').value; const list = document.getElementById('share-routes-list'); list.innerHTML = ''; if (!missions[missionName]) return; const mRoutes = missions[missionName].routes || {}; const mPois = missions[missionName].pois || []; if (Object.keys(mRoutes).length === 0) { list.innerHTML = '<div style="padding:10px; color:#777; font-style:italic;">No routes in this mission.</div>'; } else { Object.keys(mRoutes).forEach(name => { const row = document.createElement('label'); row.className = 'chk-item'; row.innerHTML = `<input type="checkbox" value="${name}"> <span>${name}</span>`; list.appendChild(row); }); } const poiLbl = document.getElementById('share-pois').nextElementSibling; if (poiLbl) poiLbl.innerText = `Include POI List (${mPois.length} Targets)`; }
 function generateMissionQR() { const missionName = document.getElementById('share-mission-select').value; const targetMission = missions[missionName]; if (!targetMission) return; const selectedRoutes = {}; document.querySelectorAll('#share-routes-list input:checked').forEach(chk => { selectedRoutes[chk.value] = targetMission.routes[chk.value]; }); const includePois = document.getElementById('share-pois').checked; const sender = document.getElementById('share-sender').value || "Commander"; const briefing = document.getElementById('share-briefing').value || ""; const payload = { protocol: "dcs-mission-v1", meta: { sender: sender, info: missionName, briefing: briefing, ts: Date.now() }, payload: { routes: selectedRoutes, pois: includePois ? (targetMission.pois || []) : [] } }; const jsonStr = JSON.stringify(payload); if (jsonStr.length > 2500) { alert("Data too large for QR."); return; } document.getElementById('qr-result-area').style.display = 'block'; document.getElementById('qr-output').innerHTML = ''; new QRCode(document.getElementById("qr-output"), { text: jsonStr, width: 256, height: 256, colorDark: "#000000", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.L }); }
 function downloadQR() { const qrContainer = document.getElementById("qr-output"); let img = qrContainer.querySelector("img"); let url = ""; if (img) { url = img.src; } else { const canvas = qrContainer.querySelector("canvas"); if (canvas) { url = canvas.toDataURL("image/png"); } } if (url) { const link = document.createElement("a"); link.href = url; link.download = "dcs_mission_qr.png"; document.body.appendChild(link); link.click(); document.body.removeChild(link); } else { alert("QR Code not generated yet."); } }
 
 // --- IMPORT ---
-function openImportModal() { document.getElementById('modal-import').style.display = 'flex'; document.getElementById('import-step-1').style.display = 'block'; document.getElementById('import-step-2').style.display = 'none'; if (!html5QrCode) { html5QrCode = new Html5Qrcode("reader"); } const config = { fps: 10, qrbox: { width: 250, height: 250 } }; html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess).catch(err => { console.log("Camera Start Error:", err); document.getElementById('reader').innerHTML = `<div style="padding:20px; color:#e74c3c; font-size:12px;"><i class="fa-solid fa-video-slash" style="font-size:24px; margin-bottom:10px;"></i><br>CAMERA NOT FOUND OR DENIED<br><span style="color:#777;">Use Drop Zone below</span></div>`; }); document.getElementById('qr-file-input').onchange = e => { if (e.target.files.length == 0) return; html5QrCode.scanFile(e.target.files[0], true).then(onScanSuccess).catch(err => alert(`Error scanning file: ${err}`)); }; }
+function openImportModal() {
+    document.getElementById('modal-import').style.display = 'flex'; document.getElementById('import-step-1').style.display = 'block'; document.getElementById('import-step-2').style.display = 'none'; if (!html5QrCode) { html5QrCode = new Html5Qrcode("reader"); } const config = { fps: 10, qrbox: { width: 250, height: 250 } }; html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess).catch(err => { console.error("Camera Start Error:", err); document.getElementById('reader').innerHTML = `<div style="padding:20px; color:#e74c3c; font-size:12px;"><i class="fa-solid fa-video-slash" style="font-size:24px; margin-bottom:10px;"></i><br>CAMERA NOT FOUND OR DENIED<br><span style="color:#777;">Use Drop Zone below</span></div>`; });
+    document.getElementById('qr-file-input').onchange = e => { if (e.target.files.length == 0) return; html5QrCode.scanFile(e.target.files[0], true).then(onScanSuccess).catch(err => alert(`Error scanning file: ${err}`)); };
+}
 function onScanSuccess(decodedText, decodedResult) { try { const data = JSON.parse(decodedText); if (data.protocol !== "dcs-mission-v1") throw new Error("Invalid Protocol"); if (html5QrCode && html5QrCode.isScanning) { html5QrCode.stop().then(() => html5QrCode.clear()); } processImportData(data); } catch (e) { console.error(e); alert("Invalid QR Code. Must be a DCS Mission v1 code."); } }
 function processImportData(data) { pendingImportData = data; const missionName = data.meta.info || "Imported Mission"; if (missions[missionName]) { showImportConflict(missionName); } else { finalizeImport('new', missionName); } }
 function showImportConflict(name) { document.getElementById('import-step-2').style.display = 'block'; document.getElementById('import-step-1').style.display = 'none'; document.getElementById('import-meta-sender').innerText = `CONFLICT: Mission "${name}" exists.`; document.getElementById('import-meta-info').innerText = "Select merge or replace strategy:"; const manifest = document.getElementById('import-manifest'); manifest.innerHTML = `<li style="color:var(--accent)"><b>MERGE:</b> Combine new data with existing file.</li><li style="color:var(--red-for)"><b>REPLACE:</b> Overwrite existing mission entirely.</li><li style="color:#2ecc71"><b>NEW:</b> Save as "${name} [COPY]".</li>`; const container = document.querySelector('#import-step-2'); container.querySelectorAll('.dynamic-import-btn').forEach(b => b.remove()); const btnHtml = `<button class="btn-full btn-action dynamic-import-btn" style="margin-top:10px;" onclick="finalizeImport('merge', '${name}')">MERGE INTO EXISTING</button><button class="btn-full btn-danger dynamic-import-btn" style="margin-top:5px;" onclick="finalizeImport('replace', '${name}')">REPLACE EXISTING</button><button class="btn-full btn-success dynamic-import-btn" style="margin-top:5px;" onclick="finalizeImport('new', '${name}')">IMPORT AS NEW (COPY)</button>`; const discardBtn = container.querySelector('.btn-danger:not(.dynamic-import-btn)'); discardBtn.insertAdjacentHTML('beforebegin', btnHtml); }

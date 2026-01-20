@@ -11,26 +11,21 @@
         // Moved to HEAD to ensure it is available for all downstream scripts
         var socket = io();
         window.socket = socket;
-        console.log("Socket Initialized (HEAD)", socket);
 
         // --- REFRESH LOGIC ---
         var currentBootId = null;
 
         socket.on('server_handshake', function (data) {
-            console.log("Health Check:", data);
             if (data && data.boot_id) {
                 if (currentBootId === null) {
                     currentBootId = data.boot_id;
-                    console.log("Boot ID set:", currentBootId);
                 } else if (currentBootId !== data.boot_id) {
-                    console.log("Server Restart detected. Reloading...");
                     window.location.reload();
                 }
             }
         });
 
         socket.on('refresh', function () {
-            console.log("Manual Refresh Triggered");
             window.location.reload();
         });
     </script>
@@ -1635,6 +1630,171 @@
             align-items: center;
             gap: 6px;
         }
+
+
+
+        /* --- NEW SETTINGS DRAWER STYLES --- */
+        .settings-section {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 8px;
+            margin-bottom: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .settings-header {
+            font-size: 11px;
+            color: var(--accent);
+            font-weight: bold;
+            text-transform: uppercase;
+            border-bottom: 1px solid #444;
+            padding-bottom: 4px;
+            margin-bottom: 4px;
+            display: flex;
+            /* Allow pushing content to right with flex */
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .settings-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            min-height: 24px;
+            gap: 10px;
+        }
+
+        .settings-label {
+            font-size: 12px;
+            color: #ccc;
+            white-space: nowrap;
+        }
+
+        .settings-sub-label {
+            font-size: 10px;
+            color: #888;
+            margin-left: 2px;
+        }
+
+        .settings-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            flex-grow: 1;
+            /* Allow growing if needed */
+            justify-content: flex-end;
+            /* Align to right by default */
+        }
+
+        .settings-control input[type="range"] {
+            width: 100%;
+            /* For sliders in their own row or taking space */
+            max-width: 120px;
+            height: 4px;
+        }
+
+        .settings-control select {
+            padding: 2px 4px;
+            font-size: 11px;
+            background: #111;
+            border: 1px solid #555;
+            color: #fff;
+            height: 24px;
+        }
+
+        .settings-control input[type="checkbox"] {
+            margin: 0;
+            cursor: pointer;
+            width: 14px;
+            height: 14px;
+        }
+
+        .settings-control input[type="color"] {
+            width: 20px;
+            height: 20px;
+            padding: 0;
+            border: 1px solid #555;
+            background: none;
+            cursor: pointer;
+        }
+
+        /* Compact Grid for toggle buttons */
+        .layer-toggle-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+        }
+
+        .layer-toggle-btn {
+            background: #111;
+            border: 1px solid #444;
+            color: #888;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 11px;
+            transition: all 0.1s;
+        }
+
+        .layer-toggle-btn:hover {
+            background: #222;
+        }
+
+        .layer-toggle-btn.active {
+            border-color: var(--accent);
+            color: #fff;
+            background: rgba(120, 170, 188, 0.1);
+        }
+
+        /* Overriding specific icons colors when active if needed */
+        .layer-toggle-btn.active i {
+            color: var(--accent);
+        }
+
+        /* Coalition Button Colors (Active Only) */
+        #btn-vis-red.active {
+            border-color: #e74c3c;
+            background: rgba(231, 76, 60, 0.1);
+            color: #e74c3c;
+        }
+
+        #btn-vis-red.active span {
+            color: #e74c3c !important;
+        }
+
+        #btn-vis-blue.active {
+            border-color: #3498db;
+            background: rgba(52, 152, 219, 0.1);
+            color: #3498db;
+        }
+
+        #btn-vis-blue.active span {
+            color: #3498db !important;
+        }
+
+        #btn-vis-neutral.active {
+            border-color: #aaa;
+            background: rgba(180, 180, 180, 0.1);
+            color: #aaa;
+        }
+
+        /* Input Number Styling */
+        .input-compact {
+            background: #111;
+            border: 1px solid #555;
+            color: #fff;
+            padding: 2px 5px;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+            width: 60px;
+            text-align: right;
+        }
     </style>
 </head>
 
@@ -1698,304 +1858,344 @@
     </div>
 
     <div id="settings-drawer" class="drawer-panel">
-        <div class="panel-header">Options</div>
-        <div class="form-row"><label>Coordinates Format</label><select id="opt-coords" onchange="updateSettings()">
-                <option value="latlon">Lat/Lon (DMS)</option>
-                <option value="mgrs">MGRS</option>
-            </select></div>
-        <div class="form-row"><label>Altitude Units</label><select id="opt-alt-unit" onchange="updateSettings()">
-                <option value="ft">Feet (ft)</option>
-                <option value="m">Meters (m)</option>
-            </select></div>
-        <div class="form-row"><label>Distance Units</label><select id="opt-dist-unit" onchange="updateSettings()">
-                <option value="nm">Nautical Miles (nm)</option>
-                <option value="km">Kilometers (km)</option>
-            </select></div>
-        <div class="form-row"><label>Default Waypoint Altitude</label>
-            <div class="input-group">
-                <div class="input-with-kb">
-                    <input type="number" id="opt-def-alt" value="20000"
-                        style="width: 100%; border-radius: 4px 0 0 4px;">
-                    <div class="kb-trigger" onclick="openKeyboard('opt-def-alt', 'number')">123</div>
-                </div>
-                <div class="unit-badge" id="lbl-def-alt-unit">ft</div>
-            </div>
-        </div>
+        <div class="panel-header">Settings & Options</div>
 
-        <div class="form-row" style="margin-top:10px;">
-            <label>Navigation Logic</label>
-            <div style="border-top:1px solid #444; margin:2px 0;"></div>
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="color:#78aabc; font-size:12px; font-weight:bold;">Auto Sequence Routes</span>
-                <input type="checkbox" id="chk-opt-autoseq" checked onchange="toggleSeq()"
-                    style="width:16px; height:16px; cursor:pointer;">
-            </div>
-            <div
-                style="display:flex; flex-direction:column; gap:5px; background:#111; padding:5px; border:1px solid #555; border-radius:4px;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#78aabc; font-size:12px; font-weight:bold;">Enable "Fly-By" Turns</span>
-                    <input type="checkbox" id="chk-opt-flyby" onchange="saveMapSettings()"
-                        style="width:16px; height:16px; cursor:pointer;">
-                </div>
-                <div style="border-top:1px solid #444; margin:2px 0;"></div>
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#78aabc; font-size:12px; font-weight:bold;">Course Line Auto Pilot Mode</span>
-                    <input type="checkbox" id="chk-opt-courseline" onchange="saveMapSettings()"
-                        style="width:16px; height:16px; cursor:pointer;">
-                </div>
-            </div>
-        </div>
-        <div class="form-row" style="margin-top:10px; border-top:1px solid #444; padding-top:10px;">
-            <label style="font-size:12px; color:#fff; font-weight:bold; margin-bottom:5px; display:block;">Grid
-                Appearance</label>
-
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
-                <span style="color:#aaa; font-size:13px;">Lat/Lon Grid</span>
-                <input type="color" id="col-latlon" value="#00ffcc" onchange="updateSettings(); saveMapSettings()"
-                    class="color-picker-mini">
-            </div>
-
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
-                <span style="color:#aaa; font-size:13px;">MGRS Grid</span>
-                <input type="color" id="col-mgrs" value="#733f59" onchange="updateSettings(); saveMapSettings()"
-                    class="color-picker-mini">
-            </div>
-
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="color:#aaa; font-size:13px;">MGRS GZD</span>
-                <input type="color" id="col-mgrs-gzd" value="#988035" onchange="updateSettings(); saveMapSettings()"
-                    class="color-picker-mini">
-            </div>
-        </div>
-
-        <div class="form-row" style="margin-top:10px; border-top:1px solid #444; padding-top:10px;">
-            <label style="font-size:12px; color:#fff; font-weight:bold; margin-bottom:5px; display:block;">Pointer
-                Appearance</label>
-
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <select id="opt-ptr-style" onchange="updatePointerVisuals(); saveMapSettings()"
-                    style="flex-grow:1; background:#111; color:#fff; border:1px solid #555; padding:2px; margin-right:8px;">
-                    <option value="cross">Crosshair</option>
-                    <option value="dot">Dot</option>
-                    <option value="chevron">Chevron</option>
-                    <option value="circle">Circle</option>
-                    <option value="x">X-Mark</option>
-                    <option value="arrow">Arrow</option>
-                    <option value="diamond">Diamond</option>
-                    <option value="square">Square</option>
-                </select>
-                <input type="color" id="opt-ptr-color" value="#00ff00"
-                    onchange="updatePointerVisuals(); saveMapSettings()" class="color-picker-mini">
-            </div>
-        </div>
-
-        <div style="margin-top:10px; border-top:1px solid #444; padding-top:10px;">
-            <label style="font-size:12px; color:#fff; font-weight:bold; margin-bottom:10px; display:block;">Map
-                Visibility</label>
-
-            <div style="display:flex; flex-direction:column; gap:8px;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#aaa; font-size:13px;">Show Airports</span>
-                    <div style="display:flex; align-items:center; gap:5px;">
-                        <input type="color" id="col-air-neutral" value="#888888" onchange="renderAirports()"
-                            class="color-picker-mini"
-                            style="width:20px; height:20px; padding:0; border:1px solid #555; background:none; cursor:pointer;"
-                            title="Neutral Color">
-                        <input type="checkbox" id="chk-vis-air" checked
-                            onchange="toggleLayer(airportLayer, null); saveMapSettings()"
-                            style="width:16px; height:16px; cursor:pointer;">
+        <!-- 1. DISPLAY UNITS -->
+        <div class="settings-section">
+            <div class="settings-header">Display Units</div>
+            <div class="settings-row">
+                <span class="settings-label">Coordinates</span>
+                <div class="settings-control">
+                    <div style="display:flex; width:100%; max-width:120px;">
+                        <select id="opt-coords" onchange="updateSettings()" style="width:100%;">
+                            <option value="latlon">Lat/Lon (DMS)</option>
+                            <option value="mgrs">MGRS</option>
+                        </select>
                     </div>
                 </div>
-                <!-- LIVE STATUS TOGGLE (Phase 3a) -->
-                <div
-                    style="display:flex; justify-content:space-between; align-items:center; margin-left:15px; border-left:2px solid #333; padding-left:10px;">
-                    <span style="color:#78aabc; font-size:11px;">📡 Live Airport Data</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Altitude</span>
+                <div class="settings-control">
+                    <div style="display:flex; width:100%; max-width:120px;">
+                        <select id="opt-alt-unit" onchange="updateSettings()" style="width:100%;">
+                            <option value="ft">Feet (ft)</option>
+                            <option value="m">Meters (m)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Distance</span>
+                <div class="settings-control">
+                    <div style="display:flex; width:100%; max-width:120px;">
+                        <select id="opt-dist-unit" onchange="updateSettings()" style="width:100%;">
+                            <option value="nm">Nautical Miles (nm)</option>
+                            <option value="km">Kilometers (km)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Def. WP Alt</span>
+                <div class="settings-control">
+                    <div style="display:flex; width:100%; max-width:120px; align-items:center;">
+                        <div class="input-with-kb" style="flex-grow:1; width:auto;">
+                            <input type="number" id="opt-def-alt" value="20000" class="input-compact"
+                                style="border-radius: 4px 0 0 4px; width:100%; flex-grow:1;">
+                            <div class="kb-trigger" onclick="openKeyboard('opt-def-alt', 'number')"
+                                style="padding: 1px 5px; height: 22px; display: flex; align-items: center;">#</div>
+                        </div>
+                        <span class="unit-badge" id="lbl-def-alt-unit" style="height: 22px; margin-left: 2px;">ft</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. NAVIGATION LOGIC -->
+        <div class="settings-section">
+            <div class="settings-header">Navigation Logic</div>
+            <div class="settings-row">
+                <span class="settings-label">Auto Sequence Routes</span>
+                <div class="settings-control">
+                    <input type="checkbox" id="chk-opt-autoseq" checked onchange="toggleSeq()">
+                </div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Enable "Fly-By" Turns</span>
+                <div class="settings-control">
+                    <input type="checkbox" id="chk-opt-flyby" onchange="saveMapSettings()">
+                </div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Course Line Auto Pilot</span>
+                <div class="settings-control">
+                    <input type="checkbox" id="chk-opt-courseline" onchange="saveMapSettings()">
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. MAP LAYERS & VISIBILITY -->
+        <div class="settings-section">
+            <div class="settings-header">Visibility Layers</div>
+
+            <!-- Airports -->
+            <div class="settings-row">
+                <span class="settings-label">Airports</span>
+                <div class="settings-control">
+                    <span class="settings-sub-label">Neutral</span>
+                    <input type="color" id="col-air-neutral" value="#888888" onchange="renderAirports()"
+                        title="Neutral Airport Color">
+                    <div style="width: 1px; height: 16px; background: #555; margin: 0 5px;"></div>
+                    <span class="settings-sub-label" style="color: #78aabc;">LIVE</span>
                     <input type="checkbox" id="chk-live-air" onchange="updateAirportStatus(); saveMapSettings()"
-                        style="width:14px; height:14px; cursor:pointer;">
+                        style="width:16px; height:16px; cursor:pointer;">
+                    <div style="width: 1px; height: 16px; background: #555; margin: 0 5px;"></div>
+                    <input type="checkbox" id="chk-vis-air" checked
+                        onchange="toggleLayer(airportLayer, null); saveMapSettings()">
                 </div>
+            </div>
 
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#aaa; font-size:13px;">Show Units (Master)</span>
+            <div style="border-top: 1px solid #444; margin: 4px 0;"></div>
+
+            <!-- Grids -->
+            <div class="settings-row">
+                <span class="settings-label">Lat/Lon Grid</span>
+                <div class="settings-control">
+                    <input type="color" id="col-latlon" value="#00ffcc" onchange="updateSettings(); saveMapSettings()">
+                    <input type="checkbox" id="chk-vis-grid" onchange="toggleLayer(gridLayer, null); saveMapSettings()">
+                </div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">MGRS Grid</span>
+                <div class="settings-control">
+                    <input type="color" id="col-mgrs-gzd" value="#988035" onchange="updateSettings(); saveMapSettings()"
+                        title="GZD Color">
+                    <input type="color" id="col-mgrs" value="#733f59" onchange="updateSettings(); saveMapSettings()"
+                        title="Grid Color">
+                    <input type="checkbox" id="chk-vis-mgrs"
+                        onchange="toggleLayer(mgrsGridLayer, null); saveMapSettings()">
+                </div>
+            </div>
+
+            <div style="border-top: 1px solid #444; margin: 4px 0;"></div>
+
+            <!-- TACTICAL OBJECTS -->
+            <div class="settings-header" style="border:none; margin:0; padding:0; font-size: 10px; color: #aaa;">
+                Tactical Objects</div>
+
+            <div class="settings-row">
+                <span class="settings-label">Units (Master)</span>
+                <div class="settings-control">
                     <input type="checkbox" id="chk-vis-unit" checked
-                        onchange="toggleLayer(unitLayer, null); saveMapSettings()"
-                        style="width:16px; height:16px; cursor:pointer;">
+                        onchange="toggleLayer(unitLayer, null); saveMapSettings()">
                 </div>
+            </div>
 
-                <!-- GRANULAR UNIT SWITCHES -->
-                <div class="sub-setting-group">
-                    <div class="setting-row">
-                        <span class="chk-label-icon" style="color:#78aabc;">
-                            <i class="fa-solid fa-plane"></i> Air Units
-                        </span>
-                        <input type="checkbox" id="chk-vis-unit-air" checked onchange="saveMapSettings()"
-                            style="width:14px; height:14px; cursor:pointer;">
-                    </div>
-                    <div class="setting-row">
-                        <span class="chk-label-icon" style="color:#2ecc71;">
-                            <i class="fa-solid fa-truck-field"></i> Ground Units
-                        </span>
-                        <input type="checkbox" id="chk-vis-unit-ground" checked onchange="saveMapSettings()"
-                            style="width:14px; height:14px; cursor:pointer;">
-                    </div>
-                    <div class="setting-row">
-                        <span class="chk-label-icon" style="color:#3498db;">
-                            <i class="fa-solid fa-ship"></i> Naval Units
-                        </span>
-                        <input type="checkbox" id="chk-vis-unit-naval" checked onchange="saveMapSettings()"
-                            style="width:14px; height:14px; cursor:pointer;">
-                    </div>
-                    <div class="setting-row">
-                        <span class="chk-label-icon" style="color:#95a5a6;">
-                            <i class="fa-solid fa-building"></i> Static Objects
-                        </span>
-                        <input type="checkbox" id="chk-vis-unit-static" onchange="saveMapSettings()"
-                            style="width:14px; height:14px; cursor:pointer;">
-                    </div>
-                </div>
+            <div class="layer-toggle-grid">
+                <!-- Unit Types -->
+                <label class="layer-toggle-btn active">
+                    <span><i class="fa-solid fa-plane"></i> Air</span>
+                    <input type="checkbox" id="chk-vis-unit-air" checked
+                        onchange="this.parentElement.classList.toggle('active', this.checked); saveMapSettings()"
+                        style="display:none;">
+                </label>
+                <label class="layer-toggle-btn active">
+                    <span><i class="fa-solid fa-truck-field"></i> Ground</span>
+                    <input type="checkbox" id="chk-vis-unit-ground" checked
+                        onchange="this.parentElement.classList.toggle('active', this.checked); saveMapSettings()"
+                        style="display:none;">
+                </label>
+                <label class="layer-toggle-btn active">
+                    <span><i class="fa-solid fa-ship"></i> Naval</span>
+                    <input type="checkbox" id="chk-vis-unit-naval" checked
+                        onchange="this.parentElement.classList.toggle('active', this.checked); saveMapSettings()"
+                        style="display:none;">
+                </label>
+                <label class="layer-toggle-btn">
+                    <span><i class="fa-solid fa-building"></i> Statics</span>
+                    <input type="checkbox" id="chk-vis-unit-static"
+                        onchange="this.parentElement.classList.toggle('active', this.checked); saveMapSettings()"
+                        style="display:none;">
+                </label>
+            </div>
 
-                <!-- AFFILIATION FILTERS (New) -->
-                <!-- AFFILIATION FILTERS (New) -->
-                <div class="sub-setting-group">
-                    <label style="font-size:10px; color:#777; text-transform:uppercase; margin-bottom:5px;">Coalition
-                        Filter</label>
+            <!-- Coalition Filters -->
+            <div class="layer-toggle-grid" style="grid-template-columns: 1fr 1fr 1fr; margin-top: 5px;">
+                <label class="layer-toggle-btn active" id="btn-vis-red" onclick="toggleCoalition('red')"
+                    style="justify-content: center;">
+                    <span style="font-weight: bold;">HOSTILE</span>
+                </label>
+                <label class="layer-toggle-btn active" id="btn-vis-blue" onclick="toggleCoalition('blue')"
+                    style="justify-content: center;">
+                    <span style="font-weight: bold;">FRIENDLY</span>
+                </label>
+                <label class="layer-toggle-btn active" id="btn-vis-neutral" onclick="toggleCoalition('neutral')"
+                    style="justify-content: center;">
+                    <span>NEUTRAL</span>
+                </label>
+                <!-- Hidden inputs kept for logic compatibility -->
+                <input type="checkbox" id="chk-vis-unit-red" checked style="display:none;"
+                    onchange="saveMapSettings(); renderPois()">
+                <input type="checkbox" id="chk-vis-unit-blue" checked style="display:none;"
+                    onchange="saveMapSettings(); renderPois()">
+                <input type="checkbox" id="chk-vis-unit-neutral" checked style="display:none;"
+                    onchange="saveMapSettings(); renderPois()">
+            </div>
 
-                    <!-- Hostile -->
-                    <div class="mil-toggle active red" id="btn-vis-red" onclick="toggleCoalition('red')">
-                        <i class="fa-solid fa-diamond"></i> Hostile
-                    </div>
-                    <input type="checkbox" id="chk-vis-unit-red" checked style="display:none;"
-                        onchange="saveMapSettings(); renderPois()">
+            <div style="border-top: 1px solid #444; margin: 8px 0 4px 0;"></div>
 
-                    <!-- Friendly -->
-                    <div class="mil-toggle active blue" id="btn-vis-blue" onclick="toggleCoalition('blue')">
-                        <i class="fa-solid fa-circle"></i> Friendly
-                    </div>
-                    <input type="checkbox" id="chk-vis-unit-blue" checked style="display:none;"
-                        onchange="saveMapSettings(); renderPois()">
-
-                    <!-- Neutral -->
-                    <div class="mil-toggle active neutral" id="btn-vis-neutral" onclick="toggleCoalition('neutral')">
-                        <i class="fa-solid fa-square"></i> Neutral
-                    </div>
-                    <input type="checkbox" id="chk-vis-unit-neutral" checked style="display:none;"
-                        onchange="saveMapSettings(); renderPois()">
-                </div>
-
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#aaa; font-size:13px;">Show User Marks</span>
+            <div class="settings-row">
+                <span class="settings-label">User POIs</span>
+                <div class="settings-control">
                     <input type="checkbox" id="chk-vis-poi" checked
-                        onchange="toggleLayer(poiLayer, null); saveMapSettings()"
-                        style="width:16px; height:16px; cursor:pointer;">
+                        onchange="toggleLayer(poiLayer, null); saveMapSettings()">
                 </div>
-
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#aaa; font-size:13px;">&nbsp;&nbsp;Show Threat Rings</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Threat Rings</span>
+                <div class="settings-control">
                     <input type="checkbox" id="chk-vis-threats" checked onchange="renderPois(); saveMapSettings()"
-                        style="width:16px; height:16px; cursor:pointer;">
+                        style="width:16px; height:16px; cursor:pointer; margin-right:5px;">
+                    <input type="range" id="sld-threat-fill" min="0" max="100" value="20"
+                        oninput="updateThreatFill(this.value)" onchange="saveMapSettings()"
+                        style="flex-grow:1; cursor:pointer;">
                 </div>
+            </div>
+        </div>
 
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#aaa; font-size:13px;">Altitude Info (Bottom)</span>
+        <!-- 4. VISUAL TUNING -->
+        <div class="settings-section">
+            <div class="settings-header">
+                <span>Map Tuning: <span id="lbl-active-map-name" style="color:#fff;">DARK</span></span>
+                <!-- Map Layer dropdown could go here, but sticking to existing logic -->
+                <button class="settings-control"
+                    style="width: auto; background: none; border: none; cursor: pointer; color: #888; font-size: 14px;"
+                    title="Reset" onclick="resetMapTuning()">
+                    <i class="fa-solid fa-rotate-left"></i>
+                </button>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Opacity</span>
+                <div class="settings-control"><input type="range" min="0.1" max="1.0" step="0.05" id="sld-map-op"
+                        oninput="tuneFilter('map', 'op', this.value)" onchange="saveMapSettings()"></div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Brightness</span>
+                <div class="settings-control"><input type="range" min="0.1" max="2.0" step="0.05" id="sld-map-br"
+                        oninput="tuneFilter('map', 'br', this.value)" onchange="saveMapSettings()"></div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Contrast</span>
+                <div class="settings-control"><input type="range" min="0.1" max="2.0" step="0.05" id="sld-map-con"
+                        oninput="tuneFilter('map', 'con', this.value)" onchange="saveMapSettings()"></div>
+            </div>
+        </div>
+
+        <!-- 5. NVG TUNING -->
+        <div class="settings-section">
+            <div class="settings-header" style="color: #2ecc71; border-color: #2ecc71;">
+                <span>NVG Overlay</span>
+                <button id="btn-opt-nvg-toggle" onclick="cycleNvgMode()"
+                    style="background:#111; border:1px solid #2ecc71; color:#2ecc71; padding:2px 6px; border-radius:3px; cursor:pointer; font-size:10px;">CYCLE</button>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Color Tint</span>
+                <div class="settings-control"><input type="range" min="0.0" max="1.0" step="0.05" id="sld-nvg-sep"
+                        oninput="tuneFilter('nvg', 'sep', this.value)"></div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Gain</span>
+                <div class="settings-control"><input type="range" min="0.0" max="1.0" step="0.05" id="sld-nvg-op"
+                        oninput="tuneFilter('nvg', 'op', this.value)"></div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Brightness</span>
+                <div class="settings-control"><input type="range" min="0.1" max="2.0" step="0.05" id="sld-nvg-br"
+                        oninput="tuneFilter('nvg', 'br', this.value)"></div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Contrast</span>
+                <div class="settings-control"><input type="range" min="0.1" max="2.0" step="0.05" id="sld-nvg-con"
+                        oninput="tuneFilter('nvg', 'con', this.value)"></div>
+            </div>
+        </div>
+
+        <!-- 6. SYSTEM & UI -->
+        <div class="settings-section">
+            <div class="settings-header">System</div>
+            <div class="settings-row">
+                <span class="settings-label">Interface Scale</span>
+                <div class="settings-control">
+                    <input type="range" id="opt-ui-scale" min="0.5" max="2.0" step="0.05" value="1.0"
+                        oninput="applyUiScale(this.value)" onchange="updateSettings()"
+                        style="flex-grow:1; cursor:pointer;">
+                </div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Wake Lock (No Sleep)</span>
+                <div class="settings-control">
+                    <input type="checkbox" id="chk-opt-wakelock" onchange="toggleWakeLock(); saveMapSettings()">
+                </div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Info Bar Data</span>
+                <div class="settings-control">
+                    <span class="settings-sub-label">ALT</span>
                     <input type="checkbox" id="chk-vis-alt" checked onchange="toggleInfo('alt'); saveMapSettings()"
                         style="width:16px; height:16px; cursor:pointer;">
-                </div>
-
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#aaa; font-size:13px;">Heading Info (Bottom)</span>
+                    <span class="settings-sub-label" style="margin-left: 5px;">HDG</span>
                     <input type="checkbox" id="chk-vis-hdg" checked onchange="toggleInfo('hdg'); saveMapSettings()"
                         style="width:16px; height:16px; cursor:pointer;">
                 </div>
-
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#aaa; font-size:13px;">Lat/Lon Grid</span>
-                    <input type="checkbox" id="chk-vis-grid" onchange="toggleLayer(gridLayer, null); saveMapSettings()"
-                        style="width:16px; height:16px; cursor:pointer;">
-                </div>
-
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#aaa; font-size:13px;">MGRS Grid</span>
-                    <input type="checkbox" id="chk-vis-mgrs"
-                        onchange="toggleLayer(mgrsGridLayer, null); saveMapSettings()"
-                        style="width:16px; height:16px; cursor:pointer;">
-                </div>
-
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#aaa; font-size:13px;">Day/Night Cycle</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Day/Night Terminator</span>
+                <div class="settings-control">
                     <input type="checkbox" id="chk-vis-term"
-                        onchange="toggleLayer(terminatorLayer, null); saveMapSettings()"
-                        style="width:16px; height:16px; cursor:pointer;">
+                        onchange="toggleLayer(terminatorLayer, null); saveMapSettings()">
                 </div>
-
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="color:#aaa; font-size:13px;">HUD Display Mode</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">HUD Overlay Mode</span>
+                <div class="settings-control">
                     <button id="btn-opt-hud" onclick="cycleHudMode(); saveMapSettings()"
-                        style="background:#111; border:1px solid #555; color:#fff; font-size:11px; padding:2px 8px; border-radius:4px; cursor:pointer; width:80px;">OFF</button>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:5px;">
-                    <span style="color:#aaa; font-size:13px;">Ring Fill Opacity</span>
-                    <input type="range" id="sld-threat-fill" min="0" max="100" value="20"
-                        oninput="updateThreatFill(this.value)" onchange="saveMapSettings()"
-                        style="width:80px; cursor:pointer;">
+                        style="background:#111; border:1px solid #555; color:#aaa; font-size:10px; padding:2px 8px; border-radius:3px; cursor:pointer; width:100%; max-width:120px;">OFF</button>
                 </div>
             </div>
-        </div>
-        <div class="form-row" style="margin-top:5px; border-top:1px solid #444; padding-top:10px;">
-            <label style="color:var(--accent); font-weight:bold;">Active Map Tuning: <span
-                    id="lbl-active-map-name">DARK</span></label>
-            <div class="form-row"><label>Opacity: <span id="val-map-op">1.0</span></label><input type="range" min="0.1"
-                    max="1.0" step="0.05" id="sld-map-op" oninput="tuneFilter('map', 'op', this.value)"
-                    onchange="saveMapSettings()"></div>
-            <div class="form-row"><label>Brightness: <span id="val-map-br">1.0</span></label><input type="range"
-                    min="0.1" max="2.0" step="0.05" id="sld-map-br" oninput="tuneFilter('map', 'br', this.value)"
-                    onchange="saveMapSettings()"></div>
-            <div class="form-row"><label>Contrast: <span id="val-map-con">1.0</span></label><input type="range"
-                    min="0.1" max="2.0" step="0.05" id="sld-map-con" oninput="tuneFilter('map', 'con', this.value)"
-                    onchange="saveMapSettings()">
+            <div class="settings-row">
+                <span class="settings-label">Pointer Styling</span>
+                <div class="settings-control">
+                    <div style="display:flex; width:100%; max-width:120px; gap:5px;">
+                        <select id="opt-ptr-style" onchange="updatePointerVisuals(); saveMapSettings()"
+                            style="flex-grow:1; width:auto;">
+                            <option value="cross">Cross</option>
+                            <option value="dot">Dot</option>
+                            <option value="chevron">Chevron</option>
+                            <option value="circle">Circle</option>
+                            <option value="x">X</option>
+                            <option value="arrow">Arrow</option>
+                            <option value="diamond">Diamond</option>
+                            <option value="square">Square</option>
+                        </select>
+                        <input type="color" id="opt-ptr-color" value="#00ff00"
+                            onchange="updatePointerVisuals(); saveMapSettings()">
+                    </div>
+                </div>
             </div>
         </div>
 
-        <div class="form-row" style="margin-top:5px; border-top:1px solid #444; padding-top:10px;">
-            <label style="color:#2ecc71; font-weight:bold;">NVG Layer</label>
-            <div class="form-row"><label>Color Tint: <span id="val-nvg-sep">1.0</span></label><input type="range"
-                    min="0.0" max="1.0" step="0.05" id="sld-nvg-sep" oninput="tuneFilter('nvg', 'sep', this.value)">
-            </div>
-            <div class="form-row"><label>Gain: <span id="val-nvg-op">1.0</span></label><input type="range" min="0.0"
-                    max="1.0" step="0.05" id="sld-nvg-op" oninput="tuneFilter('nvg', 'op', this.value)"></div>
-            <div class="form-row"><label>Brightness: <span id="val-nvg-br">0.7</span></label><input type="range"
-                    min="0.1" max="2.0" step="0.05" id="sld-nvg-br" oninput="tuneFilter('nvg', 'br', this.value)"></div>
-            <div class="form-row"><label>Contrast: <span id="val-nvg-con">0.9</span></label><input type="range"
-                    min="0.1" max="2.0" step="0.05" id="sld-nvg-con" oninput="tuneFilter('nvg', 'con', this.value)">
+        <!-- 7. DATA CARTRIDGE -->
+        <div class="settings-section" style="border-color: var(--accent);">
+            <div class="settings-header" style="color: var(--accent); border:none;">Data Cartridge (QR)</div>
+            <div style="display: flex; gap: 5px;">
+                <button class="btn-full btn-action" onclick="openShareModal()" style="height: 30px; font-size: 11px;"><i
+                        class="fa-solid fa-qrcode"></i> SHARE</button>
+                <button class="btn-full btn-alert" onclick="openImportModal()" style="height: 30px; font-size: 11px;"><i
+                        class="fa-solid fa-camera"></i> IMPORT</button>
             </div>
         </div>
-        <div class="form-row"
-            style="margin-bottom:5px; background:#111; padding:10px; border-radius:4px; border:1px solid #444;">
-            <label style="color:#fff;">Interface Scale</label>
-            <div style="display:flex; align-items:center; gap:10px;">
-                <i class="fa-solid fa-compress" style="font-size:12px; color:#777;"></i>
-                <input type="range" id="opt-ui-scale" min="0.5" max="2.0" step="0.05" value="1.0"
-                    oninput="applyUiScale(this.value)" onchange="updateSettings()" style="flex-grow:1; cursor:pointer;">
-                <i class="fa-solid fa-expand" style="font-size:12px; color:#777;"></i>
-                <span id="lbl-ui-scale" style="font-size:11px; width:30px; text-align:right;">1.0</span>
-            </div>
-        </div>
-        <div class="form-row" style="margin-top:5px; border-top:1px solid #444; padding-top:10px;">
-            <label style="color:#78aabc; font-weight:bold; margin-bottom:5px;">Data Cartridge (QR)</label>
-            <div style="display:flex; gap:10px;">
-                <button class="btn-full btn-action" onclick="openShareModal()"><i class="fa-solid fa-qrcode"></i>
-                    Share</button>
-                <button class="btn-full btn-alert" onclick="openImportModal()"><i class="fa-solid fa-camera"></i>
-                    Import</button>
-            </div>
-        </div>
-        <div class="form-row" style="margin-top:5px;">
-            <label>Device Power</label>
-            <div
-                style="display:flex; justify-content:space-between; align-items:center; background:#111; padding:5px; border:1px solid #555; border-radius:4px;">
-                <span style="color:#78aabc; font-size:12px; font-weight:bold;">Prevent Sleep (Wake Lock)</span>
-                <input type="checkbox" id="chk-opt-wakelock" onchange="toggleWakeLock(); saveMapSettings()"
-                    style="width:16px; height:16px; cursor:pointer;">
-            </div>
-        </div>
+
     </div>
 
     <div id="route-drawer" class="drawer-panel">

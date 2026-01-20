@@ -61,6 +61,7 @@ active_command_loops = set()
 clickable_mode_enabled = False
 last_pitch_time = 0
 ap_axis_locks = { "pitch": False, "roll": False }
+phonebook = {}  # Unit ID → Player Name mapping (from DCS Hook)
 
 # --- 4. FLASK & MODULE INITIALIZATION ---
 app = Flask(__name__, static_folder='state')
@@ -68,7 +69,21 @@ socketio = SocketIO(app, cors_allowed_origins='*', async_mode='gevent')
 
 # Initialize Modules
 nav = NavComputer()
-tcp_client = DCSHookClient(port=TCP_PORT, callback=socketio.emit)
+
+# Custom callback for TCP messages
+def handle_tcp_message(event_name, data):
+    """Intercepts TCP messages from DCS Hook before emitting to web clients"""
+    global phonebook
+    
+    if event_name == 'phonebook':
+        # Update server-side phonebook state
+        phonebook = data
+        print(f"📞 Phonebook updated: {len(data)} players")
+    
+    # Emit to all connected web clients
+    socketio.emit(event_name, data)
+
+tcp_client = DCSHookClient(port=TCP_PORT, callback=handle_tcp_message)
 
 
 # --- 5. HELPER FUNCTIONS ---
@@ -281,6 +296,9 @@ def handle_connect():
             'index': nav.active_wp_index,
             'name': active_route_name or "Server Route"
         })
+    # Send current phonebook to new client
+    if phonebook:
+        socketio.emit('phonebook', phonebook)
 
 @socketio.on('dcs_loop_start')
 def handle_loop_start(data):
@@ -466,7 +484,7 @@ def get_map_settings():
         "pois": True, "threats": True, "wakeLock": False
     }
     default_map = { 
-        "coords": "latlon", "altUnit": "ft", "distUnit": "nm", "defAlt": 20000, 
+        "coords": "latlon", "altUnit": "ft", "distUnit": "nm", "defAlt": 2000, 
         "layer": "dark", "uiScale": "1.0", "visibleRoutes": [], 
         "vis": default_vis 
     }

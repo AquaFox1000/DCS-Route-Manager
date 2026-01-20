@@ -1,44 +1,45 @@
 {
-    "coords": "mgrs",
+    "coords": "latlon",
     "altUnit": "m",
-    "distUnit": "km",
-    "defAlt": 20000,
-    "layer": "dark",
+    "distUnit": "nm",
+    "defAlt": 3000,
+    "layer": "sat",
     "visibleRoutes": [
-        "1234",
         "ruta 1",
-        "test"
+        "test",
+        "1234"
     ],
     "navFlyBy": false,
-    "navCourseLine": true,
+    "navCourseLine": false,
     "colors": {
-        "latlon": "#00fbff",
-        "mgrs": "#db0000",
-        "mgrsGzd": "#c27b00"
+        "latlon": "#00ffcc",
+        "mgrs": "#733f3f",
+        "mgrsGzd": "#988035"
     },
     "overlays": {
         "contours": false,
         "urban": false,
-        "roads": true,
-        "labels": true,
+        "roads": false,
+        "labels": false,
+        "buildings": false,
         "hillshade": false
     },
     "view": {
-        "zoom": 9,
+        "zoom": 14,
         "center": {
-            "lat": 41.5126907584586,
-            "lng": 41.84555053710938
+            "lat": 41.898571582031266,
+            "lng": 41.847438708237796
         }
     },
-    "threatFill": 20,
+    "threatFill": 21,
     "activeState": {
         "mission": "1234",
         "route": null
     },
     "mapFilters": {
         "dark": {
-            "br": 2,
-            "con": 1,
+            "br": 1,
+            "con": 0.85,
             "op": 1
         },
         "light": {
@@ -52,9 +53,9 @@
             "op": 1
         },
         "sat": {
-            "br": 2,
+            "br": 1.75,
             "con": 1.4,
-            "op": 0.6
+            "op": 1
         },
         "vfr": {
             "br": 0.5,
@@ -93,8 +94,8 @@
         }
     },
     "visuals": {
-        "brightness": "2",
-        "contrast": "1",
+        "brightness": "1.75",
+        "contrast": "1.4",
         "opacity": "1"
     },
     "vis": {
@@ -103,7 +104,7 @@
         "units_air": true,
         "units_ground": true,
         "units_naval": true,
-        "units_static": false,
+        "units_static": true,
         "pois": true,
         "threats": true,
         "grid": false,
