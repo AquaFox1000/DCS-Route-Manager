@@ -47,6 +47,7 @@ let tacticalUnits = {}; let theaterUnits = {}; let showWpLabels = false;
 let allPois = []; let activePoiIndex = -1; let activeEditIndex = -1; let currentMapLayerName = 'dark';
 let lastThreatDetect = 0; let lastThreatDeadly = 0; let threatFillOpacity = 0.2;
 let selectedPoiSidcPartial = 'PIN';
+// Removed duplicate declarations
 
 let mapMoveTimer = null; let isProgrammaticMove = false; let allAirportsData = {};
 let html5QrCode = null; let pendingImportData = null; let activeInputId = null;
@@ -139,7 +140,7 @@ overlayLayers['urban'] = L.tileLayer.wms('http://ows.mundialis.de/services/servi
 // NEW LAYERS
 overlayLayers['hillshade'] = L.tileLayer(`https://api.maptiler.com/tiles/hillshade/{z}/{x}/{y}.png?key=${apiKey_MapTiler}`, { opacity: 0.6, zIndex: 300 });
 
-let activeOverlays = { 'contours': false, 'urban': false, 'roads': true, 'labels': true };
+let activeOverlays = { 'contours': false, 'urban': false, 'roads': true, 'labels': true, 'buildings': false, 'hillshade': false };
 // Initialize Overlay Layers
 let airportLayer = L.layerGroup().addTo(map);
 let unitLayer = L.layerGroup().addTo(map);
@@ -154,6 +155,84 @@ let terminatorLayer = L.terminator();
 let airportMarkers = {};
 let currentNvgMode = 'off';
 let wakeLock = null;
+
+// --- LAYER & GRID FUNCTIONS ---
+function setMapLayer(name, skipSave) {
+    if (!name || !layers[name]) return;
+    if (currentMapLayerName && map.hasLayer(layers[currentMapLayerName])) {
+        map.removeLayer(layers[currentMapLayerName]);
+    }
+    layers[name].addTo(map);
+    currentMapLayerName = name;
+
+    // Update active label
+    const lbl = document.getElementById('lbl-active-map-name');
+    if (lbl) lbl.innerText = name.toUpperCase();
+
+    // Apply filters for this layer
+    if (!skipSave) saveMapSettings();
+    if (typeof applyVisualFilters === 'function') applyVisualFilters();
+}
+
+function toggleLayer(layer, forceState) {
+    if (!layer) return;
+    if (forceState !== undefined && forceState !== null) {
+        if (forceState) { if (!map.hasLayer(layer)) map.addLayer(layer); }
+        else { if (map.hasLayer(layer)) map.removeLayer(layer); }
+    } else {
+        if (map.hasLayer(layer)) map.removeLayer(layer);
+        else map.addLayer(layer);
+    }
+
+    // Grid Special Handling
+    if (layer === gridLayer && map.hasLayer(gridLayer)) updateGrid();
+    if (layer === mgrsGridLayer && map.hasLayer(mgrsGridLayer)) updateMgrsGrid();
+}
+
+function updateGrid() {
+    gridLayer.clearLayers();
+    if (!map.hasLayer(gridLayer)) return;
+    const bounds = map.getBounds();
+    const zoom = map.getZoom();
+    const color = document.getElementById('col-latlon').value || "#00ffcc";
+
+    let interval = 10;
+    if (zoom >= 10) interval = 0.1;
+    else if (zoom >= 7) interval = 1;
+    else if (zoom >= 5) interval = 5;
+
+    // Simple Lat/Lon Grid lines
+    for (let lat = Math.floor(bounds.getSouth() / interval) * interval; lat <= bounds.getNorth(); lat += interval) {
+        L.polyline([[lat, -180], [lat, 180]], { color: color, weight: 1, opacity: 0.5 }).addTo(gridLayer);
+    }
+    for (let lng = Math.floor(bounds.getWest() / interval) * interval; lng <= bounds.getEast(); lng += interval) {
+        L.polyline([[-85, lng], [85, lng]], { color: color, weight: 1, opacity: 0.5 }).addTo(gridLayer);
+    }
+}
+
+function updateMgrsGrid() {
+    mgrsGridLayer.clearLayers();
+    if (!map.hasLayer(mgrsGridLayer)) return;
+
+    const zoom = map.getZoom();
+    if (zoom < 6) return; // Too broad for MGRS
+
+    // Use existing draw helpers if available, or simple redraw
+    if (typeof drawGZDLines === 'function') drawGZDLines('mgrs-line-base mgrs-line-gzd-high');
+    if (typeof drawAllVisibleGZDs === 'function') drawAllVisibleGZDs();
+    if (typeof drawGZDAxisLabels === 'function') drawGZDAxisLabels();
+
+    if (typeof drawGridForSquare === 'function') {
+        const bounds = map.getBounds();
+        const visible = getVisibleMgrsSquares(bounds);
+        visible.forEach(tag => {
+            const p = tag.split(' ');
+            if (zoom >= 14) drawGridForSquare(p[0], p[1], 1000, 'mgrs-line-base mgrs-line-low', 'mgrs-line-base mgrs-line-high', 2, 10000);
+            else if (zoom >= 10) drawGridForSquare(p[0], p[1], 10000, 'mgrs-line-base mgrs-line-low', 'mgrs-line-base mgrs-line-high', 1, 100000);
+            else drawGridForSquare(p[0], p[1], 100000, 'mgrs-line-base mgrs-line-low', 'mgrs-line-base mgrs-line-high', 0, 100000);
+        });
+    }
+}
 
 // --- FILTER SETTINGS ---
 let filterSettings = {
@@ -1331,40 +1410,50 @@ socket.on('routes_library_update', function (data) {
 });
 
 async function saveMapSettings() {
-    const check = (id) => { const el = document.getElementById(id); return el ? el.checked : false; };
-    const payload = {
-        coords: settings.coords, altUnit: settings.altUnit, distUnit: settings.distUnit,
-        defAlt: settings.defAlt, layer: currentMapLayerName,
-        visibleRoutes: Array.from(visibleRoutes),
-        navFlyBy: check('chk-opt-flyby'), navCourseLine: check('chk-opt-courseline'),
-        colors: { latlon: document.getElementById('col-latlon').value, mgrs: document.getElementById('col-mgrs').value, mgrsGzd: document.getElementById('col-mgrs-gzd').value },
-        overlays: activeOverlays,
-        view: { zoom: map.getZoom(), center: map.getCenter() },
-        threatFill: parseInt(document.getElementById('sld-threat-fill').value),
+    try {
+        const check = (id) => { const el = document.getElementById(id); return el ? el.checked : false; };
+        const getVal = (id, def = "") => { const el = document.getElementById(id); return el ? el.value : def; };
 
-        // NEW: Active State & Visuals
-        activeState: { mission: activeMissionName, route: activeRouteName },
-        mapFilters: (typeof filterSettings !== 'undefined' && filterSettings.map) ? filterSettings.map : {},
-        visuals: {
-            brightness: getComputedStyle(document.documentElement).getPropertyValue('--map-br').trim() || "1.0",
-            contrast: getComputedStyle(document.documentElement).getPropertyValue('--map-con').trim() || "1.0",
-            opacity: getComputedStyle(document.documentElement).getPropertyValue('--map-op').trim() || "1.0"
-        },
+        const payload = {
+            coords: getVal('opt-coords', 'latlon'),
+            altUnit: getVal('opt-alt-unit', 'ft'),
+            distUnit: getVal('opt-dist-unit', 'nm'),
+            defAlt: parseInt(getVal('opt-def-alt', '20000')) || 20000,
+            layer: currentMapLayerName,
+            visibleRoutes: Array.from(visibleRoutes),
+            navFlyBy: check('chk-opt-flyby'), navCourseLine: check('chk-opt-courseline'),
+            colors: { latlon: getVal('col-latlon', '#00ffcc'), mgrs: getVal('col-mgrs', '#733f59'), mgrsGzd: getVal('col-mgrs-gzd', '#988035') },
+            overlays: activeOverlays,
+            view: { zoom: map.getZoom(), center: map.getCenter() },
+            threatFill: parseInt(getVal('sld-threat-fill', '20')),
 
-        vis: {
-            airports: check('chk-vis-air'), units: check('chk-vis-unit'),
-            units_air: check('chk-vis-unit-air'), units_ground: check('chk-vis-unit-ground'),
-            units_naval: check('chk-vis-unit-naval'), units_static: check('chk-vis-unit-static'),
-            pois: check('chk-vis-poi'), threats: check('chk-vis-threats'),
-            grid: check('chk-vis-grid'), mgrs: check('chk-vis-mgrs'),
-            alt: check('chk-vis-alt'), hdg: check('chk-vis-hdg'),
-            wakeLock: check('chk-opt-wakelock'),
-            units_red: check('chk-vis-unit-red'), units_blue: check('chk-vis-unit-blue'), units_neutral: check('chk-vis-unit-neutral'),
-            hudMode: hudMode, liveAir: check('chk-live-air'),
-            ptrStyle: document.getElementById('opt-ptr-style').value, ptrColor: document.getElementById('opt-ptr-color').value
-        }
-    };
-    await fetch('/api/map/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            // NEW: Active State & Visuals
+            activeState: { mission: activeMissionName, route: activeRouteName },
+            mapFilters: (typeof filterSettings !== 'undefined' && filterSettings.map) ? filterSettings.map : {},
+            visuals: {
+                brightness: getComputedStyle(document.documentElement).getPropertyValue('--map-br').trim() || "1.0",
+                contrast: getComputedStyle(document.documentElement).getPropertyValue('--map-con').trim() || "1.0",
+                opacity: getComputedStyle(document.documentElement).getPropertyValue('--map-op').trim() || "1.0"
+            },
+
+            vis: {
+                airports: check('chk-vis-air'), units: check('chk-vis-unit'),
+                units_air: check('chk-vis-unit-air'), units_ground: check('chk-vis-unit-ground'),
+                units_naval: check('chk-vis-unit-naval'), units_static: check('chk-vis-unit-static'),
+                pois: check('chk-vis-poi'), threats: check('chk-vis-threats'),
+                grid: check('chk-vis-grid'), mgrs: check('chk-vis-mgrs'),
+                alt: check('chk-vis-alt'), hdg: check('chk-vis-hdg'),
+                wakeLock: check('chk-opt-wakelock'),
+                units_red: check('chk-vis-unit-red'), units_blue: check('chk-vis-unit-blue'), units_neutral: check('chk-vis-unit-neutral'),
+                hudMode: hudMode, liveAir: check('chk-live-air'),
+                ptrStyle: getVal('opt-ptr-style', 'cross'), ptrColor: getVal('opt-ptr-color', '#00ff00')
+            }
+        };
+        await fetch('/api/map/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    } catch (e) {
+        console.error("saveMapSettings Failed:", e);
+        console.error("Stack trace:", e.stack);
+    }
 }
 
 async function loadMapSettings() {
@@ -1399,15 +1488,32 @@ async function loadMapSettings() {
         const localScale = localStorage.getItem('dcs_map_ui_scale'); if (localScale) { document.getElementById('opt-ui-scale').value = localScale; applyUiScale(localScale); }
         if (data.layer && layers[data.layer]) setMapLayer(data.layer);
         if (data.threatFill !== undefined) { document.getElementById('sld-threat-fill').value = data.threatFill; updateThreatFill(data.threatFill); }
-        if (data.overlays) { for (const [key, isActive] of Object.entries(data.overlays)) { if (isActive) toggleOverlay(key, true); } }
+        if (data.overlays) { for (const [key, isActive] of Object.entries(data.overlays)) { toggleOverlay(key, isActive); } }
         if (data.vis) {
             setCheckboxAndLayer('chk-vis-air', airportLayer, data.vis.airports);
             setCheckboxAndLayer('chk-vis-unit', unitLayer, data.vis.units);
-            const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = (val !== undefined ? val : true); };
+            const setChk = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.checked = (val !== undefined ? val : true);
+                    // Sync Parent Label Class (Unit Types)
+                    if (el.parentElement.classList.contains('layer-toggle-btn')) {
+                        el.parentElement.classList.toggle('active', el.checked);
+                    }
+                }
+            };
             setChk('chk-vis-unit-air', data.vis.units_air); setChk('chk-vis-unit-ground', data.vis.units_ground);
             setChk('chk-vis-unit-naval', data.vis.units_naval); setChk('chk-vis-unit-static', data.vis.units_static);
             setChk('chk-vis-unit-red', data.vis.units_red); setChk('chk-vis-unit-blue', data.vis.units_blue);
             setChk('chk-vis-unit-neutral', data.vis.units_neutral);
+
+            // Sync Coalition Buttons (Separate IDs)
+            const syncCoalitionBtn = (side) => {
+                const btn = document.getElementById(`btn-vis-${side}`);
+                const chk = document.getElementById(`chk-vis-unit-${side}`);
+                if (btn && chk) btn.classList.toggle('active', chk.checked);
+            };
+            syncCoalitionBtn('red'); syncCoalitionBtn('blue'); syncCoalitionBtn('neutral');
             setChk('chk-live-air', data.vis.liveAir); // Sync Live Air
             setCheckboxAndLayer('chk-vis-poi', poiLayer, data.vis.pois !== undefined ? data.vis.pois : true);
             const threatChk = document.getElementById('chk-vis-threats'); if (threatChk) threatChk.checked = (data.vis.threats !== undefined ? data.vis.threats : true);
@@ -1515,12 +1621,15 @@ async function loadMapSettings() {
         if (data.vis.grid && typeof updateGrid === 'function') updateGrid();
         if (data.vis.mgrs && typeof updateMgrsGrid === 'function') updateMgrsGrid();
 
-    } catch (e) { console.error("loadMapSettings Failed:", e); }
+    } catch (e) {
+        console.error("loadMapSettings Failed:", e);
+        console.error("Stack trace:", e.stack);
+    }
 }
 
 function setCheckboxAndLayer(chkId, layer, isVisible) {
     const chk = document.getElementById(chkId);
-    const shouldBeVisible = (isVisible !== false); // Default to true if undefined, or strict? logic says data.vis.x
+    const shouldBeVisible = (isVisible !== false); // Default to true if undefined, but handle explicit false
     if (chk) chk.checked = shouldBeVisible;
     if (shouldBeVisible) {
         if (!map.hasLayer(layer)) map.addLayer(layer);
@@ -1529,24 +1638,42 @@ function setCheckboxAndLayer(chkId, layer, isVisible) {
     }
 }
 
-function applyUiScale(val) { document.documentElement.style.setProperty('--ui-scale', val); document.getElementById('lbl-ui-scale').innerText = val; localStorage.setItem('dcs_map_ui_scale', val); }
+function applyUiScale(val) {
+    document.documentElement.style.setProperty('--ui-scale', val);
+    const label = document.getElementById('lbl-ui-scale');
+    if (label) label.innerText = val;
+    localStorage.setItem('dcs_map_ui_scale', val);
+}
 function updateSettings() {
-    settings.altUnit = document.getElementById('opt-alt-unit').value;
-    settings.coords = document.getElementById('opt-coords').value;
-    settings.distUnit = document.getElementById('opt-dist-unit').value;
-    settings.defAlt = parseInt(document.getElementById('opt-def-alt').value) || 20000;
-    settings.uiScale = document.getElementById('opt-ui-scale').value;
-    document.getElementById('lbl-def-alt-unit').innerText = settings.altUnit;
-    document.getElementById('lbl-global-alt-unit').innerText = settings.altUnit;
-    document.getElementById('inp-latlon-box').style.display = (settings.coords === 'latlon') ? 'block' : 'none';
-    document.getElementById('inp-mgrs-box').style.display = (settings.coords === 'mgrs') ? 'block' : 'none';
-    document.getElementById('global-alt').value = settings.defAlt;
-    document.documentElement.style.setProperty('--latlon-color', document.getElementById('col-latlon').value);
-    document.documentElement.style.setProperty('--mgrs-color', document.getElementById('col-mgrs').value);
-    document.documentElement.style.setProperty('--mgrs-gzd-color', document.getElementById('col-mgrs-gzd').value);
+    settings.altUnit = document.getElementById('opt-alt-unit')?.value || 'ft';
+    settings.coords = document.getElementById('opt-coords')?.value || 'latlon';
+    settings.distUnit = document.getElementById('opt-dist-unit')?.value || 'nm';
+    settings.defAlt = parseInt(document.getElementById('opt-def-alt')?.value) || 20000;
+    settings.uiScale = document.getElementById('opt-ui-scale')?.value || 1.0;
+
+    // Update labels with null checks
+    const defAltLabel = document.getElementById('lbl-def-alt-unit');
+    if (defAltLabel) defAltLabel.innerText = settings.altUnit;
+    const globalAltLabel = document.getElementById('lbl-global-alt-unit');
+    if (globalAltLabel) globalAltLabel.innerText = settings.altUnit;
+
+    const latlonBox = document.getElementById('inp-latlon-box');
+    if (latlonBox) latlonBox.style.display = (settings.coords === 'latlon') ? 'block' : 'none';
+    const mgrsBox = document.getElementById('inp-mgrs-box');
+    if (mgrsBox) mgrsBox.style.display = (settings.coords === 'mgrs') ? 'block' : 'none';
+
+    const globalAltInput = document.getElementById('global-alt');
+    if (globalAltInput) globalAltInput.value = settings.defAlt;
+
+    // Update CSS variables with null checks
+    const latlonColor = document.getElementById('col-latlon');
+    if (latlonColor) document.documentElement.style.setProperty('--latlon-color', latlonColor.value);
+    const mgrsColor = document.getElementById('col-mgrs');
+    if (mgrsColor) document.documentElement.style.setProperty('--mgrs-color', mgrsColor.value);
+    const mgrsGzdColor = document.getElementById('col-mgrs-gzd');
+    if (mgrsGzdColor) document.documentElement.style.setProperty('--mgrs-gzd-color', mgrsGzdColor.value);
     renderEditorPoints(); renderMapRoutes(); saveMapSettings();
 }
-function setCheckboxAndLayer(chkId, layer, shouldBeVisible) { const chk = document.getElementById(chkId); if (chk) { chk.checked = shouldBeVisible; if (shouldBeVisible && !map.hasLayer(layer)) map.addLayer(layer); if (!shouldBeVisible && map.hasLayer(layer)) map.removeLayer(layer); } }
 
 // --- ROUTE & MISSION LOGIC ---
 async function getGroundElevation(lat, lon) { try { const resp = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`); const data = await resp.json(); if (data && data.elevation) return data.elevation[0]; } catch (e) { } return 0; }
@@ -1761,7 +1888,7 @@ function drawMeasureLine(start, end, isFinal, isRemote = false) {
 function createPoi(lat, lon, name, isUserPos) {
     if (!activeMissionName && !isUserPos) { showToast("Select Mission First"); return; }
     const color = isUserPos ? '#00ff00' : '#ffff00'; const label = isUserPos ? "My Pos" : (name || "Mark"); const sidc = isUserPos ? "SFGPU-------" : "SHGPU-------";
-    allPois.push({ lat, lon, name: label, color: color, sidc: sidc }); renderPois(); setClickMode('none'); if (!isUserPos) saveActiveMission(); if (activeMissionName) renderBrowserList();
+    allPois.push({ lat, lon, name: label, color: color, sidc: sidc }); renderPois(); setClickMode('none'); if (!isUserPos) saveActiveMission(); if (activeMissionName) renderBrowserList(); renderPoiList();
 }
 function renderPois() {
     poiLayer.clearLayers(); threatLayer.clearLayers();
@@ -1811,9 +1938,9 @@ function savePoiEdit() {
     allPois[activePoiIndex].threatDetect = tDetect; allPois[activePoiIndex].threatDeadly = tDeadly; allPois[activePoiIndex].threatDetectEnabled = document.getElementById('chk-poi-threat-detect').checked; allPois[activePoiIndex].threatDeadlyEnabled = document.getElementById('chk-poi-threat-deadly').checked;
     if (tDetect > 0) lastThreatDetect = tDetect; if (tDeadly > 0) lastThreatDeadly = tDeadly;
     if (selectedPoiSidcPartial !== 'PIN') { const aff = document.getElementById('poi-affil').value; let dim = 'G'; if (selectedPoiSidcPartial.startsWith('M')) dim = 'A'; if (selectedPoiSidcPartial.startsWith('N')) dim = 'S'; finalSidc = `S${aff}${dim}P${selectedPoiSidcPartial}`; if (aff === 'H') color = '#e74c3c'; else if (aff === 'F') color = '#3498db'; else if (aff === 'N') color = '#2ecc71'; else color = '#f1c40f'; }
-    allPois[activePoiIndex].name = name; allPois[activePoiIndex].color = color; allPois[activePoiIndex].sidc = finalSidc; closePoiModal(); renderPois(); saveActiveMission(); renderBrowserList();
+    allPois[activePoiIndex].name = name; allPois[activePoiIndex].color = color; allPois[activePoiIndex].sidc = finalSidc; closePoiModal(); renderPois(); saveActiveMission(); renderBrowserList(); renderPoiList();
 }
-function deletePoi() { if (activePoiIndex === -1) return; allPois.splice(activePoiIndex, 1); closePoiModal(); renderPois(); saveActiveMission(); renderBrowserList(); }
+function deletePoi() { if (activePoiIndex === -1) return; allPois.splice(activePoiIndex, 1); closePoiModal(); renderPois(); saveActiveMission(); renderBrowserList(); renderPoiList(); }
 function closePoiModal() { document.getElementById('poi-modal').style.display = 'none'; if (typeof closeKeyboard === 'function') closeKeyboard(); activePoiIndex = -1; }
 
 const poiPresets = [{ label: "SAM-L", code: "UCDS--", det: 45, dead: 30, desc: "Long Range SAM" }, { label: "SAM-M", code: "UCDM--", det: 25, dead: 18, desc: "Med Range SAM" }, { label: "SAM-S", code: "UCDT--", det: 8, dead: 5, desc: "Short Range SAM" }, { label: "AAA", code: "UCDG--", det: 4, dead: 2, desc: "AAA" }, { label: "MANPAD", code: "UCIM--", det: 4, dead: 2.5, desc: "Manpad" }, { label: "Armor", code: "UCA---", det: 0, dead: 2, desc: "Tank" }, { label: "Recon", code: "UCR---", det: 0, dead: 0, desc: "Recon" }, { label: "Arty", code: "UCF---", det: 0, dead: 15, desc: "Arty" }, { label: "SCUD", code: "UCFM--", det: 0, dead: 60, desc: "SCUD" }, { label: "Inf", code: "UCI---", det: 0, dead: 0.5, desc: "Inf" }, { label: "Ship", code: "IBN---", det: 60, dead: 30, desc: "Naval" }, { label: "Util", code: "UCV---", det: 0, dead: 0, desc: "Utility" }, { label: "Fighter", code: "MF----", det: 40, dead: 20, desc: "Fighter" }, { label: "Helo", code: "MH----", det: 10, dead: 5, desc: "Helis" }, { label: "Pin", code: "PIN", det: 0, dead: 0, desc: "Marker" }];
@@ -1976,6 +2103,17 @@ socket.on('tactical', function (packet) {
     });
     for (let id in tacticalUnits) { if (!tacticalUnits[id].updated) { unitLayer.removeLayer(tacticalUnits[id].marker); delete tacticalUnits[id]; } }
 });
+socket.on('visual_target_added', function (poi) {
+    if (!poi) return;
+    allPois.push(poi);
+    renderPois();
+    if (activeMissionName) {
+        saveActiveMission();
+        renderBrowserList();
+        renderPoiList();
+    }
+    showToast("Visual Target Added: " + poi.name);
+});
 socket.on('apply_settings', (data) => { });
 
 function openKeyboard(inputId, type) { activeInputId = inputId; const kb = document.getElementById('virtual-keyboard'); const container = document.getElementById('kb-keys-container'); container.innerHTML = ''; const numericKeys = [['7', '8', '9'], ['4', '5', '6'], ['1', '2', '3'], ['0', '.', 'BS']]; const fullKeys = [['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'], ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'], ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'], ['Z', 'X', 'C', 'V', 'B', 'N', 'M', '.', 'BS']]; const layout = (type === 'number') ? numericKeys : fullKeys; layout.forEach(row => { const rowDiv = document.createElement('div'); rowDiv.className = 'kb-row'; row.forEach(key => { const btn = document.createElement('button'); btn.className = 'kb-key'; if (key === 'BS') { btn.innerHTML = '<i class="fa-solid fa-delete-left"></i>'; btn.className += ' action'; btn.onclick = () => handleKey('BACKSPACE'); } else { btn.innerText = key; btn.onclick = () => handleKey(key); } rowDiv.appendChild(btn); }); container.appendChild(rowDiv); }); const actionRow = document.createElement('div'); actionRow.className = 'kb-row'; actionRow.style.marginTop = "5px"; const spaceBtn = document.createElement('button'); spaceBtn.className = 'kb-key wide'; spaceBtn.innerText = "SPACE"; spaceBtn.onclick = () => handleKey('SPACE'); if (type !== 'number') actionRow.appendChild(spaceBtn); const entBtn = document.createElement('button'); entBtn.className = 'kb-key enter wide'; entBtn.innerText = "DONE"; entBtn.onclick = closeKeyboard; actionRow.appendChild(entBtn); container.appendChild(actionRow); kb.classList.add('visible'); }
@@ -2009,4 +2147,10 @@ function togglePoiThreatVis() { if (activePoiIndex === -1) return; const current
 function toggleCoalition(side) { const btn = document.getElementById(`btn-vis-${side}`); const chk = document.getElementById(`chk-vis-unit-${side}`); if (btn && chk) { chk.checked = !chk.checked; btn.classList.toggle('active', chk.checked); saveMapSettings(); renderPois(); } }
 function updatePoiThreatVisBtn(isVisible) { const btn = document.getElementById('btn-poi-threat-vis'); if (isVisible) { btn.classList.add('active'); btn.innerHTML = '<i class="fa-solid fa-eye"></i>'; btn.style.color = "#78aabc"; } else { btn.classList.remove('active'); btn.innerHTML = '<i class="fa-solid fa-eye-slash"></i>'; btn.style.color = "#555"; } }
 function updateThreatFill(val) { threatFillOpacity = val / 100; renderPois(); }
-loadAirports(); loadMapSettings(); loadSavedRoutes(); loadSavedPois();
+// Wait for DOM to be ready before initializing
+window.addEventListener('DOMContentLoaded', async () => {
+    await loadAirports();
+    await loadMapSettings();
+    await loadSavedRoutes();
+    await loadSavedPois();
+});
