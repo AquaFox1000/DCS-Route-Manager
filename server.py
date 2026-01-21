@@ -62,6 +62,7 @@ clickable_mode_enabled = False
 last_pitch_time = 0
 ap_axis_locks = { "pitch": False, "roll": False }
 phonebook = {}  # Unit ID → Player Name mapping (from DCS Hook)
+last_metadata = None # Cache for player context
 
 # --- 4. FLASK & MODULE INITIALIZATION ---
 app = Flask(__name__, static_folder='state')
@@ -74,11 +75,15 @@ nav = NavComputer()
 def handle_tcp_message(event_name, data):
     """Intercepts TCP messages from DCS Hook before emitting to web clients"""
     global phonebook
+    global last_metadata
     
     if event_name == 'phonebook':
         # Update server-side phonebook state
         phonebook = data
         print(f"📞 Phonebook updated: {len(data)} players")
+    elif event_name == 'metadata':
+        last_metadata = data
+        print(f"👤 Metadata updated for: {data.get('player_name', 'Unknown')}")
     
     # Emit to all connected web clients
     socketio.emit(event_name, data)
@@ -299,6 +304,9 @@ def handle_connect():
     # Send current phonebook to new client
     if phonebook:
         socketio.emit('phonebook', phonebook)
+    # Send cached metadata to new client
+    if last_metadata:
+        socketio.emit('metadata', last_metadata)
 
 @socketio.on('dcs_loop_start')
 def handle_loop_start(data):

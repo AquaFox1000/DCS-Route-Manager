@@ -24,6 +24,13 @@
                 "threatDeadlyEnabled": false,
                 "threatDetect": 0,
                 "threatDetectEnabled": false
+            },
+            {
+                "color": "#ffff00",
+                "lat": 41.97913622385729,
+                "lon": 41.888811343742745,
+                "name": "Mark",
+                "sidc": "SHGPU-------"
             }
         ],
         "routes": {

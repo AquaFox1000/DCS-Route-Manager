@@ -83,7 +83,8 @@ const map = L.map('map', {
     center: [42.15, 42.15],
     zoom: 7,
     zoomControl: false,
-    attributionControl: false
+    attributionControl: false,
+    wheelPxPerZoomLevel: 150 // Increase to reduce sensitivity (default 60)
 });
 
 let layers = {};
@@ -1928,6 +1929,22 @@ function createPoi(lat, lon, name, isUserPos) {
 function renderPois() {
     poiLayer.clearLayers(); threatLayer.clearLayers();
     const showThreats = document.getElementById('chk-vis-threats') ? document.getElementById('chk-vis-threats').checked : true; const unitMult = (settings.distUnit === 'km') ? 1000 : 1852; const showPois = document.getElementById('chk-vis-poi') ? document.getElementById('chk-vis-poi').checked : true;
+    const zoom = map.getZoom();
+    let showAsDot = false;
+    let iconSize = 28;
+
+    // Sizing Logic (Match Ground Units)
+    if (zoom <= 9) {
+        showAsDot = true;
+        iconSize = 28;
+    } else if (zoom <= 11) {
+        iconSize = Math.round(28 * 0.6); // ~17px
+    } else if (zoom === 12) {
+        iconSize = 28; // 100%
+    } else {
+        iconSize = 36; // Big (Match POI default)
+    }
+
     allPois.forEach((poi, i) => {
         if (!showPois) return; const color = poi.color || '#ffff00'; const center = [poi.lat, poi.lon];
         if (showThreats && poi.threatVisible !== false) {
@@ -1935,8 +1952,26 @@ function renderPois() {
             if (poi.threatDeadlyEnabled && poi.threatDeadly > 0) { L.circle(center, { radius: poi.threatDeadly * unitMult, color: color, weight: 1, fill: true, fillColor: color, fillOpacity: threatFillOpacity, dashArray: '10, 10', opacity: 0.8, interactive: false }).addTo(threatLayer); }
         }
         let icon;
-        if (!poi.sidc || poi.sidc === 'PIN') { icon = L.divIcon({ className: 'poi-icon', html: `<i class="fa-solid fa-map-pin" style="color:${poi.color}; font-size:32px; filter:drop-shadow(0 3px 2px rgba(0,0,0,0.5));"></i>`, iconSize: [32, 32], iconAnchor: [16, 32] }); }
-        else { try { if (typeof ms !== 'undefined') { const symb = new ms.Symbol(poi.sidc, { size: 28, colorMode: "Light" }).asCanvas(); icon = L.divIcon({ className: 'poi-icon', html: `<img src="${symb.toDataURL()}" style="width:100%; height:100%;">`, iconSize: [36, 36], iconAnchor: [18, 18] }); } else { throw new Error("No Lib"); } } catch (e) { icon = L.divIcon({ className: 'poi-icon', html: '📌', iconSize: [24, 24] }); } }
+
+        if (showAsDot) {
+            icon = L.divIcon({ className: 'poi-dot', html: `<div style="width:6px; height:6px; background:${color}; border-radius:50%; border:1px solid #000; box-shadow: 0 0 6px #cb6500;"></div>`, iconSize: [6, 6], iconAnchor: [3, 3] });
+        } else {
+            if (!poi.sidc || poi.sidc === 'PIN') {
+                // Scale Pin? - Let's keep Pin readable but maybe smaller at lower zooms if not dot.
+                // For now, keep pin somewhat standard or scale it slightly?
+                // User asked for "same zoom level sizes", implies 17px at zoom 10.
+                let pinSize = (iconSize < 28) ? 24 : 32;
+                icon = L.divIcon({ className: 'poi-icon', html: `<i class="fa-solid fa-map-pin" style="color:${poi.color}; font-size:${pinSize}px; filter:drop-shadow(0 3px 2px rgba(0,0,0,0.5)) drop-shadow(0 0 6px #cb6500);"></i>`, iconSize: [pinSize, pinSize], iconAnchor: [pinSize / 2, pinSize] });
+            }
+            else {
+                try {
+                    if (typeof ms !== 'undefined') {
+                        const symb = new ms.Symbol(poi.sidc, { size: iconSize, colorMode: "Light" }).asCanvas();
+                        icon = L.divIcon({ className: 'poi-icon', html: `<img src="${symb.toDataURL()}" style="width:100%; height:100%; filter: drop-shadow(0 0 6px #cb6500);">`, iconSize: [iconSize, iconSize], iconAnchor: [iconSize / 2, iconSize / 2] });
+                    } else { throw new Error("No Lib"); }
+                } catch (e) { icon = L.divIcon({ className: 'poi-icon', html: '📌', iconSize: [24, 24] }); }
+            }
+        }
         const m = L.marker(center, { icon: icon, draggable: true }).addTo(poiLayer); m.bindTooltip(poi.name, { direction: 'top', offset: [0, -35], permanent: showWpLabels, className: 'airport-label' });
         m.on('dragend', (e) => { const pos = e.target.getLatLng(); allPois[i].lat = pos.lat; allPois[i].lon = pos.lng; renderPois(); saveActiveMission(); }); m.on('click', () => openPoiModal(i));
     });
@@ -1994,7 +2029,10 @@ map.on('moveend', () => { scheduleViewSave(); updateGrid(); updateMgrsGrid(); })
 map.on('zoomend', () => {
     scheduleViewSave();
     updateGrid();
+    scheduleViewSave();
+    updateGrid();
     updateMgrsGrid();
+    renderPois(); // Re-render POIs for dynamic sizing
     // Re-render theater units with new zoom-dependent sizing
     if (theaterUnits && Object.keys(theaterUnits).length > 0) {
         const zoom = map.getZoom();
@@ -2162,24 +2200,36 @@ socket.on('theater_state', function (data) {
                 iconSize = 32; // 100%
             }
         } else if (category === 'air' || category === 'naval') {
-            // AI Air/Naval: zoom 0-6 dots, 7-9 60%, 10+ 80% of base size (28px)
-            iconSize = 28;
+            // AI Air/Naval:
+            // Zoom 0-6: Dots
+            // Zoom 7-9: 60% (~17px)
+            // Zoom 10-11: 80% (~22px)
+            // Zoom 12+: 36px
             if (zoom <= 6) {
                 showAsDot = true;
+                iconSize = 28;
             } else if (zoom <= 9) {
                 iconSize = Math.round(28 * 0.6); // ~17px
-            } else {
+            } else if (zoom <= 11) {
                 iconSize = Math.round(28 * 0.8); // ~22px
+            } else {
+                iconSize = 36;
             }
         } else {
-            // AI Ground/Static: zoom 0-9 dots, 10-12 60%, 13+ 100%
-            iconSize = 28;
+            // AI Ground/Static: 
+            // Zoom 0-9: Dots
+            // Zoom 10-11: 60% (17px)
+            // Zoom 12: 100% (28px) 
+            // Zoom 13+: Match POI (36px)
             if (zoom <= 9) {
                 showAsDot = true;
-            } else if (zoom <= 12) {
+                iconSize = 28;
+            } else if (zoom <= 11) {
                 iconSize = Math.round(28 * 0.6); // ~17px
-            } else {
+            } else if (zoom === 12) {
                 iconSize = 28; // 100%
+            } else {
+                iconSize = 36; // Big (Match POI)
             }
         }
 
@@ -2370,7 +2420,7 @@ function createUnitMarker(unit, color, category, showAsDot, iconSize, isPlayer, 
             // SIMPLIFIED POPUP CONTENT
             // Safety checks for display values
             const safeAlt = (!isNaN(altVal)) ? `${altVal} ${altUnit} MSL` : "N/A";
-            const safeHdg = (!isNaN(hdgDisplay)) ? `${pad(hdgDisplay)}°` : "N/A";
+            const safeHdg = (!isNaN(hdgDisplay)) ? `${String(hdgDisplay).padStart(3, '0')}°` : "N/A";
 
             const popupContent = `<div style="min-width:120px; text-align: left;">
                 <div style="font-weight:bold; color:#78aabc; font-size:13px; margin-bottom:5px; border-bottom:1px solid rgba(120,170,188,0.3); padding-bottom:2px;">
@@ -2409,14 +2459,26 @@ function buildSIDC(affiliation, level1, level2, level3) {
         // AIR - Keep it simple, use generic symbols
         dimension = 'A';
         if (level2 === 1) {
-            // Airplane - Just use generic fixed-wing
-            symbolSet = 'MF---------'; // Military Fixed Wing
+            // Airplane
+            if (level3 === 1 || level3 === 2 || level3 === 3) {
+                // Group 1: Fighter / Fighter Bomber / Interceptor
+                symbolSet = 'MFF-------';
+            } else if (level3 === 4 || level3 === 6) {
+                // Group 2: Intruder / Battleplane (Attack)
+                symbolSet = 'MFA-------';
+            } else if (level3 === 5) {
+                // Group 3: Cruiser (Strategic Bomber)
+                symbolSet = 'MFB-------';
+            } else {
+                // Generic Fixed Wing
+                symbolSet = 'MF---------';
+            }
         } else if (level2 === 2) {
-            // Helicopter - Generic rotary wing
-            symbolSet = 'MH---------'; // Military Rotary Wing
+            // Helicopter
+            symbolSet = 'MH---------';
         } else {
             // Unknown air
-            symbolSet = 'M----------'; // Generic Military Aircraft
+            symbolSet = 'M----------';
         }
     } else if (level1 === 2) {
         // GROUND (Corrected with actual wsTypes values)

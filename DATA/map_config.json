@@ -3,7 +3,7 @@
     "altUnit": "m",
     "distUnit": "nm",
     "defAlt": 3000,
-    "layer": "sat",
+    "layer": "dark",
     "visibleRoutes": [],
     "navFlyBy": false,
     "navCourseLine": false,
@@ -23,8 +23,8 @@
     "view": {
         "zoom": 11,
         "center": {
-            "lat": 41.92475971933977,
-            "lng": 41.858940124511726
+            "lat": 42.03046798802483,
+            "lng": 41.7037488582424
         }
     },
     "threatFill": 21,
@@ -90,8 +90,8 @@
         }
     },
     "visuals": {
-        "brightness": "1.75",
-        "contrast": "1.4",
+        "brightness": "1",
+        "contrast": "1",
         "opacity": "1"
     },
     "vis": {
