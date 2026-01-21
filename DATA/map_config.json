@@ -4,31 +4,27 @@
     "distUnit": "nm",
     "defAlt": 3000,
     "layer": "sat",
-    "visibleRoutes": [
-        "ruta 1",
-        "test",
-        "1234"
-    ],
+    "visibleRoutes": [],
     "navFlyBy": false,
     "navCourseLine": false,
     "colors": {
         "latlon": "#00ffcc",
-        "mgrs": "#733f3f",
+        "mgrs": "#a62121",
         "mgrsGzd": "#988035"
     },
     "overlays": {
         "contours": false,
         "urban": false,
         "roads": false,
-        "labels": false,
+        "labels": true,
         "buildings": false,
         "hillshade": false
     },
     "view": {
-        "zoom": 14,
+        "zoom": 11,
         "center": {
-            "lat": 41.898571582031266,
-            "lng": 41.847438708237796
+            "lat": 41.92475971933977,
+            "lng": 41.858940124511726
         }
     },
     "threatFill": 21,
@@ -39,7 +35,7 @@
     "mapFilters": {
         "dark": {
             "br": 1,
-            "con": 0.85,
+            "con": 1,
             "op": 1
         },
         "light": {

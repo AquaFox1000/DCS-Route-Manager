@@ -57,6 +57,7 @@ let selectedPoiSidcPartial = 'PIN';
 let followMode = true; let headingUp = false;
 let planeMarker = null;
 let lastTelemetry = null;
+let myUnitId = null;
 let theaterUnits = {};
 let tacticalUnits = {};
 let phonebook = {}; // Unit ID → Player Name mapping
@@ -282,6 +283,22 @@ function toggleLabels() {
     if (typeof renderMapRoutes === 'function') renderMapRoutes();
     if (typeof renderPois === 'function') renderPois();
     if (typeof renderAirports === 'function') renderAirports();
+
+    // FORCE Theater Unit Update
+    // We iterate through existing units and re-bind tooltips with new permanent setting
+    for (let id in theaterUnits) {
+        if (theaterUnits[id] && theaterUnits[id].marker) {
+            const m = theaterUnits[id].marker;
+            const content = m.getTooltip().getContent(); // Get existing content
+            m.unbindTooltip();
+            m.bindTooltip(content, {
+                permanent: showWpLabels,
+                direction: 'top',
+                offset: [0, -5], // Simplify offset for generic update, or check isDot if critical
+                className: 'active-leg-label'
+            });
+        }
+    }
 }
 
 function toggleDrawer(name) {
@@ -2016,6 +2033,14 @@ async function loadAirports() { try { const res = await fetch('/api/airports'); 
 
 // --- SOCKET EVENT HANDLERS ---
 
+// Metadata: Player context (ID, Name)
+socket.on('metadata', function (data) {
+    if (data && data.unit_id) {
+        myUnitId = String(data.unit_id);
+        console.log("👤 Identity Confirmed. Unit ID:", myUnitId);
+    }
+});
+
 // Phonebook: Player roster updates (Unit ID → Player Name)
 socket.on('phonebook', function (data) {
     console.log("📞 PHONEBOOK UPDATE:");
@@ -2061,6 +2086,9 @@ socket.on('theater_state', function (data) {
     }
 
     data.forEach(u => {
+        // Filter Owner (Avoid Duplicate with PlaneMarker)
+        if (myUnitId && String(u.id) === myUnitId) return;
+
         // Coalition filtering
         const isRed = (u.coalition === 1);
         const isBlue = (u.coalition === 2);
@@ -2160,6 +2188,19 @@ socket.on('theater_state', function (data) {
             // Unit already exists, update position
             theaterUnits[u.id].marker.setLatLng([u.lat, u.long]);
             theaterUnits[u.id].updated = true;
+            theaterUnits[u.id].data = u; // Store latest data
+
+            // ROTATION UPDATE (Air Units)
+            if (category === 'air' || isPlayer) {
+                const el = theaterUnits[u.id].marker.getElement();
+                if (el) {
+                    const rotatable = el.querySelector('.rotatable-icon');
+                    if (rotatable) {
+                        const hdgDeg = (u.heading || 0) * (180 / Math.PI);
+                        rotatable.style.transform = `rotate(${hdgDeg}deg)`;
+                    }
+                }
+            }
 
             // Update icon if zoom level changed (check if current marker type matches required type)
             const currentIsDot = theaterUnits[u.id].isDot;
@@ -2173,7 +2214,7 @@ socket.on('theater_state', function (data) {
         } else {
             // New unit, create marker
             const marker = createUnitMarker(u, color, category, showAsDot, iconSize, isPlayer, playerName);
-            theaterUnits[u.id] = { marker: marker, updated: true, isDot: showAsDot, iconSize: iconSize };
+            theaterUnits[u.id] = { marker: marker, updated: true, isDot: showAsDot, iconSize: iconSize, data: u };
         }
     });
 
@@ -2188,8 +2229,28 @@ socket.on('theater_state', function (data) {
     }
 });
 
+// Helper to clean unit labels (User Request: Replace _ with space)
+function cleanUnitLabel(text) {
+    if (!text) return "";
+    return String(text).replace(/_/g, ' ');
+}
+
 // Helper function to create unit marker based on rendering parameters
 function createUnitMarker(unit, color, category, showAsDot, iconSize, isPlayer, playerName) {
+    // PREPARE LABELS
+    // 1. Get raw string (Player Name or Unit Type)
+    // User Update: AI = unit.name, Player = username
+    let rawLabel;
+    if (isPlayer) {
+        rawLabel = playerName;
+    } else {
+        // Use unit.name, fallback to Unknown if missing
+        rawLabel = unit.name || "Unknown";
+    }
+
+    // 2. Cleanup using helper
+    let cleanLabel = cleanUnitLabel(rawLabel);
+
     if (showAsDot) {
         // Render as simple dot
         const m = L.circleMarker([unit.lat, unit.long], {
@@ -2200,12 +2261,11 @@ function createUnitMarker(unit, color, category, showAsDot, iconSize, isPlayer, 
             weight: 1
         }).addTo(unitLayer);
 
-        // Simple tooltip: player name OR unit type (type_level4)
-        const labelText = isPlayer ? playerName : (unit.type_level4 || unit.name);
-        m.bindTooltip(labelText, {
+        m.bindTooltip(cleanLabel, {
             direction: 'top',
             offset: [0, -5],
-            className: 'active-leg-label'
+            className: 'active-leg-label',
+            permanent: showWpLabels // Respect global toggle
         });
 
         return m;
@@ -2223,9 +2283,18 @@ function createUnitMarker(unit, color, category, showAsDot, iconSize, isPlayer, 
                 let sidc = buildSIDC(affiliation, unit.type_level1, unit.type_level2, unit.type_level3);
 
                 const sym = new ms.Symbol(sidc, { size: iconSize, colorMode: "Light" }).asCanvas();
+
+                // Rotation Style (Air units only)
+                let rotStyle = "";
+                let rotClass = "";
+                if (category === 'air' || isPlayer) {
+                    rotStyle = `transform: rotate(${unit.heading}deg); transition: transform 0.5s linear; transform-origin: center;`;
+                    rotClass = "rotatable-icon";
+                }
+
                 icon = L.divIcon({
                     className: 'theater-unit-icon',
-                    html: `<img src="${sym.toDataURL()}" style="width:100%; height:100%;">`,
+                    html: `<div class="${rotClass}" style="width:100%; height:100%; ${rotStyle}"><img src="${sym.toDataURL()}" style="width:100%; height:100%;"></div>`,
                     iconSize: [iconSize, iconSize],
                     iconAnchor: [iconSize / 2, iconSize / 2]
                 });
@@ -2234,21 +2303,39 @@ function createUnitMarker(unit, color, category, showAsDot, iconSize, isPlayer, 
             }
         } catch (e) {
             // Fallback to generic milsymbol (Unknown unit)
-            console.warn("Milsymbol error, using fallback:", e);
+            // console.warn("Milsymbol error, using fallback:", e);
             try {
                 const fallbackSidc = buildSIDC('N', unit.type_level1, 0, 0); // Generic unknown for the category
                 const sym = new ms.Symbol(fallbackSidc, { size: iconSize, colorMode: "Light" }).asCanvas();
+                // Rotation Style (Air units only)
+                let rotStyle = "";
+                let rotClass = "";
+                if (category === 'air' || isPlayer) {
+                    const hdgDeg = (unit.heading || 0) * (180 / Math.PI);
+                    rotStyle = `transform: rotate(${hdgDeg}deg); transition: transform 0.5s linear; transform-origin: center;`;
+                    rotClass = "rotatable-icon";
+                }
+
                 icon = L.divIcon({
                     className: 'theater-unit-icon',
-                    html: `<img src="${sym.toDataURL()}" style="width:100%; height:100%;">`,
+                    html: `<div class="${rotClass}" style="width:100%; height:100%; ${rotStyle}"><img src="${sym.toDataURL()}" style="width:100%; height:100%;"></div>`,
                     iconSize: [iconSize, iconSize],
                     iconAnchor: [iconSize / 2, iconSize / 2]
                 });
             } catch (e2) {
                 // Final fallback: Use standard marker
+                // Rotation Style (Air units only)
+                let rotStyle = "";
+                let rotClass = "";
+                if (category === 'air' || isPlayer) {
+                    const hdgDeg = (unit.heading || 0) * (180 / Math.PI);
+                    rotStyle = `transform: rotate(${hdgDeg}deg); transition: transform 0.5s linear; transform-origin: center;`;
+                    rotClass = "rotatable-icon";
+                }
+
                 icon = L.divIcon({
                     className: 'theater-unit-icon',
-                    html: `<div style="width:${iconSize}px; height:${iconSize}px; background:${color}; opacity:0.6; border:2px solid ${color}; border-radius:3px;"></div>`,
+                    html: `<div class="${rotClass}" style="width:${iconSize}px; height:${iconSize}px; background:${color}; opacity:0.6; border:2px solid ${color}; border-radius:3px; ${rotStyle}"></div>`,
                     iconSize: [iconSize, iconSize],
                     iconAnchor: [iconSize / 2, iconSize / 2]
                 });
@@ -2257,40 +2344,48 @@ function createUnitMarker(unit, color, category, showAsDot, iconSize, isPlayer, 
 
         const m = L.marker([unit.lat, unit.long], { icon: icon, zIndexOffset: 100 }).addTo(unitLayer);
 
-        // Simple tooltip on hover: player name OR type_level4
-        const hoverLabel = isPlayer ? playerName : (unit.type_level4 || unit.name);
-        m.bindTooltip(hoverLabel, {
+        m.bindTooltip(cleanLabel, {
             direction: 'top',
             offset: [0, -iconSize / 2 - 5],
-            className: 'active-leg-label'
+            className: 'active-leg-label',
+            permanent: showWpLabels // Respect global toggle
         });
 
         // Detailed popup on click
         m.on('click', () => {
-            const altDisplay = Math.round(unit.alt);
-            const hdgDisplay = Math.round(unit.heading);
-
-            let popupContent = '';
-            if (isPlayer) {
-                // Player: Show player name, unit type, speed, alt, heading
-                popupContent = `<div style="min-width:150px;">
-                    <div style="font-weight:bold; color:#78aabc; font-size:13px; margin-bottom:4px;">${playerName}</div>
-                    <div style="font-size:11px;">Unit: ${unit.name}</div>
-                    <div style="font-size:11px;">Alt: ${altDisplay}m</div>
-                    <div style="font-size:11px;">Hdg: ${hdgDisplay}°</div>
-                </div>`;
-            } else {
-                // AI: Show type_level4, name, alt, heading
-                popupContent = `<div style="min-width:150px;">
-                    <div style="font-weight:bold; color:#78aabc; font-size:13px; margin-bottom:4px;">${unit.type_level4 || unit.name}</div>
-                    <div style="font-size:11px;">Name: ${unit.name}</div>
-                    <div style="font-size:11px;">Alt: ${altDisplay}m</div>
-                    <div style="font-size:11px;">Hdg: ${hdgDisplay}°</div>
-                </div>`;
+            // Retrieve latest unit data if available to ensure live Alt/Hdg
+            let currentUnit = unit;
+            if (theaterUnits[unit.id] && theaterUnits[unit.id].data) {
+                currentUnit = theaterUnits[unit.id].data;
             }
 
+            // ALTITUDE FORMATTING
+            const altUnit = settings.altUnit || 'ft';
+            const altVal = toDisplayAlt(currentUnit.alt);
+
+            // HEADING FORMATTING (Radians -> Degrees)
+            const hdgDeg = (currentUnit.heading || 0) * (180 / Math.PI);
+            const hdgDisplay = Math.round(hdgDeg);
+
+            // SIMPLIFIED POPUP CONTENT
+            // Safety checks for display values
+            const safeAlt = (!isNaN(altVal)) ? `${altVal} ${altUnit} MSL` : "N/A";
+            const safeHdg = (!isNaN(hdgDisplay)) ? `${pad(hdgDisplay)}°` : "N/A";
+
+            const popupContent = `<div style="min-width:120px; text-align: left;">
+                <div style="font-weight:bold; color:#78aabc; font-size:13px; margin-bottom:5px; border-bottom:1px solid rgba(120,170,188,0.3); padding-bottom:2px;">
+                    ${cleanLabel}
+                </div>
+                <div style="font-size:12px; margin-bottom:2px;">
+                    <span style="color:#aaa;">Altitude:</span> <span style="font-weight:bold; color:#fff;">${safeAlt}</span>
+                </div>
+                <div style="font-size:12px;">
+                    <span style="color:#aaa;">Heading:</span> <span style="font-weight:bold; color:#fff;">${safeHdg}</span>
+                </div>
+            </div>`;
+
             L.popup()
-                .setLatLng([unit.lat, unit.long])
+                .setLatLng([currentUnit.lat, currentUnit.long])
                 .setContent(popupContent)
                 .openOn(map);
         });
@@ -2493,23 +2588,9 @@ function updatePointerVisuals() { const style = document.getElementById('opt-ptr
 const blockRealMouse = (e) => { if (VirtualPointer.active && e.isTrusted) { e.preventDefault(); e.stopPropagation(); } }; const eventsToBlock = ['mousedown', 'mouseup', 'mousemove', 'click', 'dblclick', 'pointerdown', 'pointerup', 'pointermove', 'contextmenu'];
 if (typeof eventsToBlock !== 'undefined') { eventsToBlock.forEach(evt => { window.addEventListener(evt, blockRealMouse, true); }); }
 socket.on('pointer_mode_status', function (data) { VirtualPointer.toggle(data.active); }); socket.on('pointer_update', function (data) { VirtualPointer.update(data.x, data.y, data.norm); }); socket.on('simulate_pointer_down', function (data) { VirtualPointer.press(data.x, data.y, data.norm); }); socket.on('simulate_pointer_up', function (data) { VirtualPointer.release(data.x, data.y, data.norm); });
-socket.on('tactical', function (packet) {
-    if (!packet.data) return;
-    const showAir = document.getElementById('chk-vis-unit-air') ? document.getElementById('chk-vis-unit-air').checked : true; const showGround = document.getElementById('chk-vis-unit-ground') ? document.getElementById('chk-vis-unit-ground').checked : true; const showNaval = document.getElementById('chk-vis-unit-naval') ? document.getElementById('chk-vis-unit-naval').checked : true;
-    const showRed = document.getElementById('chk-vis-unit-red') ? document.getElementById('chk-vis-unit-red').checked : true; const showBlue = document.getElementById('chk-vis-unit-blue') ? document.getElementById('chk-vis-unit-blue').checked : true; const showNeutral = document.getElementById('chk-vis-unit-neutral') ? document.getElementById('chk-vis-unit-neutral').checked : true;
-    for (let id in tacticalUnits) { tacticalUnits[id].updated = false; }
-    packet.data.forEach(u => {
-        let aff = (u.coa === 1) ? 'H' : (u.coa === 2) ? 'F' : 'N';
-        if (aff === 'H' && !showRed) return; if (aff === 'F' && !showBlue) return; if (aff === 'N' && !showNeutral) return;
-        let isAir = (u.typ === 'air'); let isHeli = (u.typ === 'heli'); let isSea = (u.typ === 'sea'); let isGround = (!isAir && !isHeli && !isSea);
-        if ((isAir || isHeli) && !showAir) return; if (isSea && !showNaval) return; if (isGround && !showGround) return;
-        let battleDim = 'G'; let func = 'U-------'; if (u.typ === 'air') { battleDim = 'A'; func = 'PMF-----'; } else if (u.typ === 'heli') { battleDim = 'A'; func = 'PMH-----'; } else if (u.typ === 'sea') { battleDim = 'S'; func = 'P-------'; }
-        const sidc = `S${aff}${battleDim}P${func}`;
-        if (tacticalUnits[u.id]) { tacticalUnits[u.id].marker.setLatLng([u.lat, u.lon]); tacticalUnits[u.id].updated = true; }
-        else { let icon; try { if (typeof ms !== 'undefined') { const sym = new ms.Symbol(sidc, { size: 20, colorMode: "Light" }).asCanvas(); icon = L.divIcon({ className: 'tac-icon', html: `<img src="${sym.toDataURL()}" style="width:100%; height:100%;">`, iconSize: [28, 28], iconAnchor: [14, 14] }); } else { throw new Error("No Milsymbol"); } } catch (e) { icon = L.divIcon({ className: 'tac-icon', html: `<div style="width:10px; height:10px; background:red;"></div>`, iconSize: [10, 10] }); } const m = L.marker([u.lat, u.lon], { icon: icon, zIndexOffset: 100 }).addTo(unitLayer).bindTooltip(`Unit ${u.id}`); tacticalUnits[u.id] = { marker: m, updated: true }; }
-    });
-    for (let id in tacticalUnits) { if (!tacticalUnits[id].updated) { unitLayer.removeLayer(tacticalUnits[id].marker); delete tacticalUnits[id]; } }
-});
+// DEPRECATED: 'tactical' event caused duplicate markers. 
+// Logic now centralized in 'theater_state' above.
+// socket.on('tactical', function (packet) {});
 socket.on('visual_target_added', function (poi) {
     if (!poi) return;
     allPois.push(poi);

@@ -150,6 +150,37 @@
             background-position: center;
         }
 
+        /* --- TACTICAL POPUP STYLES --- */
+        .leaflet-popup-content-wrapper,
+        .leaflet-popup-tip {
+            background: rgba(21, 29, 33, 0.95);
+            color: var(--text-main);
+            border: 1px solid var(--accent);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.6);
+            border-radius: 4px;
+            /* Slightly squared for tactical look */
+        }
+
+        .leaflet-popup-tip {
+            border-top: none;
+            /* Fix tip border overlap if needed */
+            border-left: none;
+        }
+
+        .leaflet-popup-content {
+            margin: 10px;
+            font-family: 'Consolas', monospace;
+            /* Technical font */
+        }
+
+        .leaflet-popup-close-button {
+            color: var(--accent) !important;
+        }
+
+        .leaflet-popup-close-button:hover {
+            color: #fff !important;
+        }
+
         /* BOTTOM STATUS BAR */
         #bottom-bar {
             min-height: calc(30px * var(--ui-scale));
@@ -2675,7 +2706,7 @@
         <div id="kb-keys-container"></div>
     </div>
 
-    <script src="/static/js/map.js"></script>
+    <script src="/static/js/map.js?v=2"></script>
     <div id="virtual-cursor"></div>
     <div id="scratchpad-layer">
         <div id="sp-text-cursor">SCRATCHPAD MODE</div>
