@@ -26,11 +26,15 @@
                 "threatDetectEnabled": false
             },
             {
-                "color": "#ffff00",
+                "color": "#e74c3c",
                 "lat": 41.97913622385729,
                 "lon": 41.888811343742745,
                 "name": "Mark",
-                "sidc": "SHGPU-------"
+                "sidc": "SHGPUCDM--",
+                "threatDeadly": 18,
+                "threatDeadlyEnabled": true,
+                "threatDetect": 25,
+                "threatDetectEnabled": true
             }
         ],
         "routes": {

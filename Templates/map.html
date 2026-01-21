@@ -2027,6 +2027,16 @@
                         onchange="toggleLayer(unitLayer, null); saveMapSettings()">
                 </div>
             </div>
+            <div class="settings-row">
+                <span class="settings-label">Theater Threats</span>
+                <div class="settings-control">
+                    <input type="checkbox" id="chk-vis-theater-threats"
+                        onchange="renderTheaterThreats(); saveMapSettings()"
+                        style="width:16px; height:16px; cursor:pointer; margin-right:5px;">
+                    <input type="range" id="rng-theater-threat-opacity" min="0" max="100" step="0.1" value="10"
+                        oninput="renderTheaterThreats(); saveMapSettings()" style="flex-grow:1; cursor:pointer;">
+                </div>
+            </div>
 
             <div class="layer-toggle-grid">
                 <!-- Unit Types -->
@@ -2510,6 +2520,7 @@
                 Outdoors</span></button>
         <button class="menu-item" onclick="setMapLayer('relief')" data-layer="relief"><span>Terrain
                 Relief</span></button>
+        <button class="menu-item" onclick="setMapLayer('winter')" data-layer="winter"><span>Winter</span></button>
 
         <div style="border-top:1px solid #444; margin:5px 0;"></div>
         <div style="font-size:10px; color:#777; padding:0 5px; text-transform:uppercase;">Layer Overlays</div>

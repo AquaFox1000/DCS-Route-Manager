@@ -1,9 +1,9 @@
 {
     "coords": "latlon",
     "altUnit": "m",
-    "distUnit": "nm",
+    "distUnit": "km",
     "defAlt": 3000,
-    "layer": "dark",
+    "layer": "winter",
     "visibleRoutes": [],
     "navFlyBy": false,
     "navCourseLine": false,
@@ -21,13 +21,13 @@
         "hillshade": false
     },
     "view": {
-        "zoom": 11,
+        "zoom": 9,
         "center": {
-            "lat": 42.03046798802483,
-            "lng": 41.7037488582424
+            "lat": 41.859461975535886,
+            "lng": 41.65048461963946
         }
     },
-    "threatFill": 21,
+    "threatFill": 0,
     "activeState": {
         "mission": "1234",
         "route": null
@@ -87,6 +87,11 @@
             "br": 1,
             "con": 1,
             "op": 1
+        },
+        "winter": {
+            "br": 1,
+            "con": 1,
+            "op": 1
         }
     },
     "visuals": {
@@ -103,6 +108,8 @@
         "units_static": true,
         "pois": true,
         "threats": true,
+        "theaterThreats": false,
+        "theaterOpacity": "0",
         "grid": false,
         "mgrs": false,
         "alt": true,

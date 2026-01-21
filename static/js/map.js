@@ -98,6 +98,7 @@ layers['darkstreet'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertile
 layers['vfr'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }); // Placeholder
 layers['vfr_night'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, className: 'invert-map' });
 layers['relief'] = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}', { maxZoom: 13 });
+layers['winter'] = L.tileLayer(`https://api.maptiler.com/maps/winter-v4/256/{z}/{x}/{y}.png?key=${apiKey_MapTiler}`, { maxZoom: 22 });
 
 // Thunderforest Base Maps
 layers['tf_landscape'] = L.tileLayer(`https://{s}.tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey=${apiKey_Thunderforest}`, { maxZoom: 22 });
@@ -259,6 +260,8 @@ let filterSettings = {
     map: JSON.parse(localStorage.getItem('map_filters')) || {
         'dark': { br: 1.2, con: 1.2, op: 1.0 },
         'light': { br: 0.6, con: 1.8, op: 1.0 },
+        'start_dark': { br: 1.2, con: 1.2, op: 1.0 }, // Added missing defaults based on common patterns if needed, but 'dark' covers current default.
+        'winter': { br: 1.0, con: 1.0, op: 1.0 },
         'darkstreet': { br: 0.8, con: 1.2, op: 1.0 },
         'sat': { br: 0.9, con: 1.0, op: 1.0 },
         'vfr': { br: 0.6, con: 1.7, op: 1.0 },
@@ -1477,6 +1480,7 @@ async function saveMapSettings() {
                 units_air: check('chk-vis-unit-air'), units_ground: check('chk-vis-unit-ground'),
                 units_naval: check('chk-vis-unit-naval'), units_static: check('chk-vis-unit-static'),
                 pois: check('chk-vis-poi'), threats: check('chk-vis-threats'),
+                theaterThreats: check('chk-vis-theater-threats'), theaterOpacity: getVal('rng-theater-threat-opacity', '10'),
                 grid: check('chk-vis-grid'), mgrs: check('chk-vis-mgrs'),
                 alt: check('chk-vis-alt'), hdg: check('chk-vis-hdg'),
                 wakeLock: check('chk-opt-wakelock'),
@@ -1553,6 +1557,14 @@ async function loadMapSettings() {
             setChk('chk-live-air', data.vis.liveAir); // Sync Live Air
             setCheckboxAndLayer('chk-vis-poi', poiLayer, data.vis.pois !== undefined ? data.vis.pois : true);
             const threatChk = document.getElementById('chk-vis-threats'); if (threatChk) threatChk.checked = (data.vis.threats !== undefined ? data.vis.threats : true);
+
+            // Theater Threats
+            const chkTh = document.getElementById('chk-vis-theater-threats');
+            if (chkTh) chkTh.checked = (data.vis.theaterThreats !== undefined ? data.vis.theaterThreats : false);
+            if (data.vis.theaterOpacity !== undefined) {
+                const rngThOp = document.getElementById('rng-theater-threat-opacity');
+                if (rngThOp) rngThOp.value = data.vis.theaterOpacity;
+            }
 
             // GRID: Only use Server if LocalStorage is missing (First Run)
             if (localStorage.getItem('vis_grid') === null) {
@@ -2277,8 +2289,103 @@ socket.on('theater_state', function (data) {
             delete theaterUnits[id];
         }
     }
+
+    // Refresh threats if enabled
+    renderTheaterThreats();
 });
 
+// Helper to determine threat ranges based on unit type
+function getUnitRanges(unit) {
+    // Default: No threat
+    let ranges = { det: 0, dead: 0 };
+
+    // Only Ground (2) and Navy (3) usually have fixed ranges we care about here
+    // Air (1) is too dynamic, Static (5) is usually benign unless AAA
+    if (unit.type_level1 === 2) { // Ground
+        if (unit.type_level2 === 16) { // SAM
+            if (unit.type_level3 === 102) { ranges = { det: 100, dead: 75 }; } // Long Range (S-300 etc) - approx
+            else if (unit.type_level3 === 27) { ranges = { det: 45, dead: 35 }; } // Med Range
+            else if (unit.type_level3 === 26) { ranges = { det: 25, dead: 15 }; } // Med/Short
+            else { ranges = { det: 30, dead: 20 }; } // Generic
+        }
+        else if (unit.type_level2 === 8) { // Vehicles
+            if (unit.type_level3 === 27) { ranges = { det: 10, dead: 5 }; } // SR SAM / Avenger
+            else if (unit.type_level3 === 26) { ranges = { det: 5, dead: 3 }; } // SPAAG
+        }
+        else if (unit.type_level2 === 20 && unit.type_level3 === 27) { // MANPADS
+            ranges = { det: 6, dead: 4 };
+        }
+        else if (unit.type_level2 === 17) { // Tanks - visual range
+            ranges = { det: 0, dead: 2.5 };
+        }
+    }
+    else if (unit.type_level1 === 3) { // Navy
+        // Ships - varied
+        ranges = { det: 50, dead: 30 };
+    }
+
+    return ranges;
+}
+
+// Theater Threat Ring Rendering
+let theaterThreatLayer = L.layerGroup().addTo(map);
+
+function renderTheaterThreats() {
+    theaterThreatLayer.clearLayers();
+
+    const show = document.getElementById('chk-vis-theater-threats') ? document.getElementById('chk-vis-theater-threats').checked : false;
+    if (!show) return;
+
+    const rng = document.getElementById('rng-theater-threat-opacity');
+    let rawOpacity = rng ? parseFloat(rng.value) : 10;
+    if (isNaN(rawOpacity)) rawOpacity = 10;
+    const opacity = rawOpacity / 100.0;
+    const unitMult = (settings.distUnit === 'km') ? 1000 : 1852;
+
+    for (let id in theaterUnits) {
+        const u = theaterUnits[id].data;
+        if (!u) continue;
+
+        // Determine ranges
+        const ranges = getUnitRanges(u);
+        if (ranges.det === 0 && ranges.dead === 0) continue;
+
+        // Color match
+        let color = '#aaaaaa';
+        if (u.coalition === 1) color = '#e74c3c';
+        else if (u.coalition === 2) color = '#3498db';
+
+        const center = [u.lat, u.long];
+
+        // Draw Detection (Dashed lines, no fill)
+        if (ranges.det > 0) {
+            L.circle(center, {
+                radius: ranges.det * unitMult,
+                color: color,
+                weight: 1,
+                fill: false,
+                dashArray: '10, 5',
+                opacity: 0.6,
+                interactive: false
+            }).addTo(theaterThreatLayer);
+        }
+
+        // Draw Deadly (Solid lines, fill based on opacity)
+        if (ranges.dead > 0) {
+            L.circle(center, {
+                radius: ranges.dead * unitMult,
+                color: color,
+                weight: 1,
+                fill: (opacity > 0.05),
+                fillColor: color,
+                fillOpacity: opacity,
+                dashArray: null,
+                opacity: 0.8,
+                interactive: false
+            }).addTo(theaterThreatLayer);
+        }
+    }
+}
 // Helper to clean unit labels (User Request: Replace _ with space)
 function cleanUnitLabel(text) {
     if (!text) return "";
