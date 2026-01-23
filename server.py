@@ -231,10 +231,6 @@ virtual_pointer_state = { "active": False, "x": 0.5, "y": 0.5, "mode": "pct" } #
 
 @socketio.on('virtual_pointer_update')
 def handle_pointer_update(data):
-    """ 
-    Received from Overlay (InputManager).
-    data: { 'dx': float, 'dy': float, 'mode': 'rel'/'abs'/'pct' }
-    """
     global virtual_pointer_state
     
     mode = data.get('mode', 'rel')

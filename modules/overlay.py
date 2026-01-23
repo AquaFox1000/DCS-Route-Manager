@@ -1213,7 +1213,7 @@ class HUDOverlay(QMainWindow):
                     lambda: self.bridge.send_pointer_button("click", True),   # DOWN
                     lambda: self.bridge.send_pointer_button("click", False)   # UP
                 ):
-                    print(f"✅ Bound pointer_click (mouse) to: {pointer_click_key}")
+                    pass
                 
                 # 2. Try Keyboard Key State
                 elif InputBinder.bind_keyboard_state(
@@ -1221,7 +1221,7 @@ class HUDOverlay(QMainWindow):
                     lambda: self.bridge.send_pointer_button("click", True),   # DOWN
                     lambda: self.bridge.send_pointer_button("click", False)   # UP
                 ):
-                    print(f"✅ Bound pointer_click (key) to: {pointer_click_key}")
+                    pass                  
                 
                 # 3. Fallback (Complex Hotkeys or errors) - Simulate Click
                 else:
@@ -1229,7 +1229,6 @@ class HUDOverlay(QMainWindow):
                         self.bridge.send_pointer_button("click", True),
                         QTimer.singleShot(50, lambda: self.bridge.send_pointer_button("click", False))
                     ))
-                    print(f"⚠️ Bound pointer_click (simulated logic) to: {pointer_click_key}")
 
             for action_name, key_val in hk.items():
                 if not key_val or not isinstance(key_val, str) or not key_val.strip(): continue
