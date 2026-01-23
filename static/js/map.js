@@ -72,6 +72,8 @@ let currentMapLayerName = 'dark';
 let lastThreatDetect = 0;
 let lastThreatDeadly = 0;
 threatFillOpacity = 0.2;
+let pressTimer; // Global timer for long-press
+
 
 // --- API KEYS ---
 const apiKey_Thunderforest = '6072325a7dae4cefa200e61b9c60be7e';
@@ -357,7 +359,11 @@ function toggleMapMenu() {
         menu.classList.remove('show');
     } else {
         const rect = btn.getBoundingClientRect();
-        menu.style.top = rect.top + 'px';
+        // Updated to center vertically and maximize space (User Request)
+        menu.style.top = '50%';
+        menu.style.transform = 'translateY(-50%)';
+        menu.style.maxHeight = 'calc(100vh - 40px)';
+
         const rightOffset = (window.innerWidth - rect.left) + 10;
         menu.style.right = rightOffset + 'px';
         menu.classList.add('show');
@@ -1116,87 +1122,7 @@ function drawEdgeHeaders(includeGZD) {
     scan(false); // Left Scan Second (uses cornerTxt)
 }
 
-// --- VIRTUAL POINTER ---
-const VirtualPointer = {
-    active: false,
-    x: window.innerWidth / 2,
-    y: window.innerHeight / 2,
-    el: null,
 
-    init: function () {
-        this.el = document.getElementById('virtual-pointer');
-        this.x = window.innerWidth / 2;
-        this.y = window.innerHeight / 2;
-        this.updateVisuals();
-    },
-
-    toggle: function (isActive) {
-        this.active = isActive;
-        if (this.el) {
-            this.el.style.display = isActive ? 'block' : 'none';
-            if (isActive) {
-                this.x = window.innerWidth / 2;
-                this.y = window.innerHeight / 2;
-                this.updateVisuals();
-                showToast("Pointer Mode Active");
-            }
-        }
-    },
-
-    update: function (x, y, isNorm) {
-        if (!this.active) return;
-        if (isNorm) { this.x = x * window.innerWidth; this.y = y * window.innerHeight; }
-        else { this.x = x; this.y = y; }
-        this.updateVisuals();
-    },
-
-    // Alias for socket compat if needed, but update() handles both
-    move: function (dx, dy) {
-        if (!this.active) return;
-        this.x += dx; this.y += dy;
-        this.x = Math.max(0, Math.min(window.innerWidth, this.x));
-        this.y = Math.max(0, Math.min(window.innerHeight, this.y));
-        this.updateVisuals();
-    },
-
-    updateVisuals: function () { if (this.el) { this.el.style.transform = `translate(${this.x}px, ${this.y}px)`; } },
-
-    press: function (x, y, isNorm) {
-        if (!this.active) return;
-        this.update(x, y, isNorm);
-        const ripple = document.createElement('div');
-        ripple.className = 'pointer-click-anim';
-        ripple.style.left = this.x + 'px';
-        ripple.style.top = this.y + 'px';
-        document.body.appendChild(ripple);
-        setTimeout(() => ripple.remove(), 500);
-
-        this.el.style.display = 'none';
-        let target = document.elementFromPoint(this.x, this.y);
-        this.el.style.display = 'block';
-
-        if (target) {
-            const opts = { bubbles: true, cancelable: true, view: window, clientX: this.x, clientY: this.y, screenX: this.x, screenY: this.y };
-            target.dispatchEvent(new MouseEvent('mousedown', opts));
-            if (['INPUT', 'SELECT', 'BUTTON', 'TEXTAREA'].includes(target.tagName)) target.focus();
-        }
-    },
-
-    release: function (x, y, isNorm) {
-        if (!this.active) return;
-        this.update(x, y, isNorm);
-        this.el.style.display = 'none';
-        let target = document.elementFromPoint(this.x, this.y);
-        this.el.style.display = 'block';
-        if (target) {
-            const opts = { bubbles: true, cancelable: true, view: window, clientX: this.x, clientY: this.y, screenX: this.x, screenY: this.y };
-            target.dispatchEvent(new MouseEvent('mouseup', opts));
-            target.dispatchEvent(new MouseEvent('click', opts));
-        }
-    }
-};
-
-window.addEventListener('load', () => VirtualPointer.init());
 
 // --- SCRATCHPAD ---
 const Scratchpad = {
@@ -1901,6 +1827,7 @@ function renderEditorMap() {
     editingRouteData.forEach((pt, i) => {
         const isTgt = pt.type === 'tgt'; const isEditing = (activeEditIndex === i); const markerColor = isEditing ? '#00ff00' : (isTgt ? '#e74c3c' : '#ffffff'); const iconHtml = isTgt ? `<div style="color:${markerColor}; font-size:24px; filter:drop-shadow(0 0 3px black);">🎯</div>` : `<div style="color:${markerColor}; font-size:24px; filter:drop-shadow(0 0 3px black);"><i class="fa-solid fa-location-dot"></i></div>`; const icon = L.divIcon({ className: 'edit-icon', html: iconHtml, iconSize: [24, 24], iconAnchor: [12, 24] });
         const m = L.marker([pt.lat, pt.lon], { icon: icon, draggable: true }).addTo(editorLayer); if (showWpLabels) { m.bindTooltip(`${pt.name}`, { permanent: true, direction: 'right', className: 'airport-label' }); }
+        m.on('dragstart', () => { clearTimeout(pressTimer); });
         m.on('dragend', function (event) { const newPos = event.target.getLatLng(); editingRouteData[i].lat = newPos.lat; editingRouteData[i].lon = newPos.lng; renderEditorMap(); renderEditorPoints(); if (activeEditIndex === i) fillManualForm(i); }); m.on('click', () => startManualEdit(i));
     });
 }
@@ -1985,6 +1912,7 @@ function renderPois() {
             }
         }
         const m = L.marker(center, { icon: icon, draggable: true }).addTo(poiLayer); m.bindTooltip(poi.name, { direction: 'top', offset: [0, -35], permanent: showWpLabels, className: 'airport-label' });
+        m.on('dragstart', () => { clearTimeout(pressTimer); }); // Prevent long-press trigger
         m.on('dragend', (e) => { const pos = e.target.getLatLng(); allPois[i].lat = pos.lat; allPois[i].lon = pos.lng; renderPois(); saveActiveMission(); }); m.on('click', () => openPoiModal(i));
     });
 }
@@ -2033,7 +1961,7 @@ function selectPoiIcon(sidcPartial, el, defaultDetect, defaultDeadly) { selected
 // --- MAP EVENTS ---
 function toggleFollow() { followMode = !followMode; document.getElementById('btn-follow').classList.toggle('active', followMode); }
 function toggleHeadingUp() { headingUp = !headingUp; document.getElementById('btn-hdg-up').classList.toggle('active', headingUp); if (!headingUp) document.getElementById('map').style.transform = 'translate(0,0) rotate(0deg)'; }
-let pressTimer; map.on('mousedown', function (e) { pressTimer = setTimeout(() => { createPoi(e.latlng.lat, e.latlng.lng, "Mark", false); }, 800); }); map.on('mouseup', function (e) { clearTimeout(pressTimer); }); map.on('dragstart', () => { clearTimeout(pressTimer); if (followMode) toggleFollow(); });
+map.on('mousedown', function (e) { pressTimer = setTimeout(() => { createPoi(e.latlng.lat, e.latlng.lng, "Mark", false); }, 800); }); map.on('mouseup', function (e) { clearTimeout(pressTimer); }); map.on('dragstart', () => { clearTimeout(pressTimer); if (followMode) toggleFollow(); });
 map.on('mousemove', function (e) { if (distMode && distStart) { drawMeasureLine(distStart, e.latlng, false); } const pill = document.getElementById('val-cursor'); if (settings.coords === 'mgrs') { try { pill.innerText = MGRSString(e.latlng.lat, e.latlng.lng); } catch (err) { pill.innerText = "Err"; } } else { const toDms = (val, isLat) => { const dir = val >= 0 ? (isLat ? 'N' : 'E') : (isLat ? 'S' : 'W'); const abs = Math.abs(val); const d = Math.floor(abs); const m = Math.floor((abs - d) * 60); const s = ((abs - d - m / 60) * 3600).toFixed(2); return `${dir} ${String(d).padStart(isLat ? 2 : 3, '0')}° ${String(m).padStart(2, '0')}' ${s}"`; }; pill.innerText = `${toDms(e.latlng.lat, true)}  ${toDms(e.latlng.lng, false)}`; } });
 map.on('click', async function (e) { if (distMode) { if (!distStart) { distStart = e.latlng; measureLayer.clearLayers(); L.circleMarker(distStart, { radius: 4, color: '#6C0E42' }).addTo(measureLayer); } else { drawMeasureLine(distStart, e.latlng, true); distStart = null; } return; } if (clickMode === 'poi') { createPoi(e.latlng.lat, e.latlng.lng, "Mark", false); return; } if (clickMode === 'wp' || clickMode === 'tgt') { let userInput = parseFloat(document.getElementById('global-alt').value) || 0; let altMeters = fromDisplayAlt(userInput); let altType = document.getElementById('global-alt-type').value; if (clickMode === 'tgt') { const groundMeters = await getGroundElevation(e.latlng.lat, e.latlng.lng); altMeters = Math.round(groundMeters); altType = 'MSL'; } addPoint(e.latlng.lat, e.latlng.lng, altMeters, altType, clickMode); } });
 function scheduleViewSave() { if (isProgrammaticMove) return; if (mapMoveTimer) clearTimeout(mapMoveTimer); mapMoveTimer = setTimeout(() => { saveMapSettings(); }, 1000); }
@@ -2754,9 +2682,365 @@ socket.on('telemetry', function (data) {
 
 const pointerSvgs = { cross: (c) => `<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16 4V12M16 20V28M4 16H12M20 16H28" stroke="${c}" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="16" r="2" fill="${c}"/></svg>`, dot: (c) => `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="5" fill="${c}" stroke="none" stroke-width="1"/></svg>`, chevron: (c) => `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M8 20L16 12L24 20" stroke="${c}" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`, circle: (c) => `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="8" stroke="${c}" stroke-width="2" fill="none"/></svg>`, x: (c) => `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M10 10L22 22M22 10L10 22" stroke="${c}" stroke-width="3" stroke-linecap="round"/></svg>`, arrow: (c) => `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M16 8L22 26L16 22L10 26L16 8Z" fill="${c}" stroke="none" stroke-width="1" stroke-linejoin="round"/></svg>`, diamond: (c) => `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect x="16" y="6" width="12" height="12" transform="rotate(45 16 6)" fill="none" stroke="${c}" stroke-width="2"/></svg>`, square: (c) => `<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect x="11" y="11" width="10" height="10" stroke="${c}" stroke-width="2" fill="none"/></svg>`, };
 function updatePointerVisuals() { const style = document.getElementById('opt-ptr-style').value || 'cross'; const color = document.getElementById('opt-ptr-color').value || '#00ff00'; const svgGen = pointerSvgs[style] || pointerSvgs['cross']; const svgString = svgGen(color); const encoded = encodeURIComponent(svgString); const cursor = document.getElementById('virtual-cursor'); if (cursor) { cursor.style.backgroundImage = `url("data:image/svg+xml;charset=utf-8,${encoded}")`; } }
+
+// --- VIRTUAL POINTER SYSTEM ---
+const VirtualPointer = {
+    active: false,
+    x: 0,
+    y: 0,
+    state: 'IDLE', // IDLE, HOVER, DRAG
+    target: null,
+    dragStartPos: null,
+    dragStartLatLng: null,
+    pressTime: 0,
+    _cursorElement: null,
+    DETECTION_RADIUS: 20, // Configurable hit detection radius (pixels)
+
+    toggle: function (isActive) {
+        this.active = isActive;
+        const cursor = this._getCursor();
+        if (cursor) {
+            if (isActive) {
+                // Initialize cursor visual if not already set
+                if (!cursor.style.backgroundImage || cursor.style.backgroundImage === 'none') {
+                    updatePointerVisuals(); // Set default crosshair
+                }
+                // Center cursor on screen if this is first activation
+                if (this.x === 0 && this.y === 0) {
+                    this.x = window.innerWidth / 2;
+                    this.y = window.innerHeight / 2;
+                    cursor.style.left = this.x + 'px';
+                    cursor.style.top = this.y + 'px';
+                }
+                cursor.style.display = 'block';
+                console.log('🖱️ Virtual Pointer ACTIVATED at', this.x, this.y);
+            } else {
+                cursor.style.display = 'none';
+                console.log('🖱️ Virtual Pointer DEACTIVATED');
+            }
+        } else {
+            console.error('❌ virtual-cursor element not found!');
+        }
+
+        if (!isActive) {
+            // Cancel any active drag operation
+            if (this.state === 'DRAG' && this.target) {
+                if (this.target.marker && this.target.marker.fire) {
+                    this.target.marker.fire('dragend');
+                }
+            }
+            // Reset all state
+            this.state = 'IDLE';
+            this.target = null;
+            this.dragStartPos = null;
+            this.dragStartLatLng = null;
+        }
+    },
+
+    _getCursor: function () {
+        if (!this._cursorElement) {
+            this._cursorElement = document.getElementById('virtual-cursor');
+        }
+        return this._cursorElement;
+    },
+
+    update: function (x, y, norm) {
+        if (!this.active) return;
+        this.x = x;
+        this.y = y;
+
+        const cursor = this._getCursor();
+        if (cursor) {
+            cursor.style.left = x + 'px';
+            cursor.style.top = y + 'px';
+        }
+
+        // If mouse is pressed (dragging), simulate mousemove
+        if (this.state === 'PRESSED' && this.target) {
+            // Hide cursor to detect element underneath
+            const originalDisplay = cursor ? cursor.style.display : null;
+            if (cursor) cursor.style.display = 'none';
+
+            const element = document.elementFromPoint(x, y);
+
+            // Restore cursor
+            if (cursor) cursor.style.display = originalDisplay;
+
+            if (element) {
+                const mouseMoveEvent = new MouseEvent('mousemove', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: x,
+                    clientY: y,
+                    button: 0,
+                    buttons: 1 // Left button is pressed
+                });
+                element.dispatchEvent(mouseMoveEvent);
+            }
+        }
+    },
+
+    press: function (x, y, norm) {
+        if (!this.active) {
+            console.warn('❌ VirtualPointer.press() called but pointer not active');
+            return;
+        }
+
+        console.log('🔽 VirtualPointer.press() at', x, y);
+        this.pressTime = Date.now();
+        this.pressPos = { x: x, y: y };
+
+        // CRITICAL: Hide cursor to get element underneath
+        const cursor = this._getCursor();
+        const cursorDisplay = cursor ? cursor.style.display : null;
+        if (cursor) cursor.style.display = 'none';
+
+        // Get element at cursor position
+        const element = document.elementFromPoint(x, y);
+
+        // Restore cursor
+        if (cursor) cursor.style.display = cursorDisplay;
+
+        console.log('🎯 Element at position:', element);
+
+        if (element) {
+            // Simulate mousedown event
+            const mouseDownEvent = new MouseEvent('mousedown', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: x,
+                clientY: y,
+                button: 0 // Left button
+            });
+
+            element.dispatchEvent(mouseDownEvent);
+            console.log('📤 Dispatched mousedown to', element.tagName, element.className);
+
+            this.target = element;
+            this.state = 'PRESSED';
+        } else {
+            console.log('⭕ No element at this position');
+        }
+    },
+
+    release: function (x, y, norm) {
+        if (!this.active) return;
+
+        console.log('🔼 VirtualPointer.release() at', x, y);
+        const pressDuration = Date.now() - this.pressTime;
+        console.log('⏱️ Press duration:', pressDuration, 'ms');
+
+        // CRITICAL: Hide cursor to get element underneath
+        const cursor = this._getCursor();
+        const cursorDisplay = cursor ? cursor.style.display : null;
+        if (cursor) cursor.style.display = 'none';
+
+        // Get element at release position
+        const element = document.elementFromPoint(x, y);
+
+        // Restore cursor
+        if (cursor) cursor.style.display = cursorDisplay;
+
+        if (element) {
+            // Simulate mouseup event
+            const mouseUpEvent = new MouseEvent('mouseup', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: x,
+                clientY: y,
+                button: 0
+            });
+
+            element.dispatchEvent(mouseUpEvent);
+            console.log('📤 Dispatched mouseup to', element.tagName);
+
+            // If released on same element as pressed, simulate click
+            if (this.target === element && pressDuration < 500) {
+                console.log('🖱️ Simulating click on', element.tagName);
+
+                const clickEvent = new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: x,
+                    clientY: y,
+                    button: 0
+                });
+
+                element.dispatchEvent(clickEvent);
+                console.log('✅ Click dispatched');
+            } else if (pressDuration >= 500) {
+                console.log('🚀 Long press - might be a drag');
+                // Drag would be handled by mousemove events during press
+            }
+        }
+
+        this.state = 'IDLE';
+        this.target = null;
+    },
+
+    performHitTest: function (x, y) {
+        // Use Leaflet's built-in hit detection
+        const point = map.containerPointToLatLng([x, y]);
+
+        // Check route waypoints first (highest priority)
+        if (activeRouteName && activeRouteData.length > 0) {
+            for (let i = 0; i < activeRouteData.length; i++) {
+                const wp = activeRouteData[i];
+                if (wp.marker) {
+                    const markerPos = map.latLngToContainerPoint(wp.marker.getLatLng());
+                    const dist = Math.sqrt(Math.pow(markerPos.x - x, 2) + Math.pow(markerPos.y - y, 2));
+                    if (dist < 20) {
+                        return { type: 'waypoint', marker: wp.marker, index: i };
+                    }
+                }
+            }
+        }
+
+        // Check POIs
+        for (let i = 0; i < allPois.length; i++) {
+            const poi = allPois[i];
+            if (poi.marker) {
+                const markerPos = map.latLngToContainerPoint(poi.marker.getLatLng());
+                const dist = Math.sqrt(Math.pow(markerPos.x - x, 2) + Math.pow(markerPos.y - y, 2));
+                if (dist < this.DETECTION_RADIUS) {
+                    return { type: 'poi', marker: poi.marker, index: i };
+                }
+            }
+        }
+
+        // Check theater units
+        for (let id in theaterUnits) {
+            const unit = theaterUnits[id];
+            if (unit && unit.marker) {
+                const markerPos = map.latLngToContainerPoint(unit.marker.getLatLng());
+                const dist = Math.sqrt(Math.pow(markerPos.x - x, 2) + Math.pow(markerPos.y - y, 2));
+                if (dist < this.DETECTION_RADIUS) {
+                    return { type: 'unit', marker: unit.marker, id: id };
+                }
+            }
+        }
+
+        // Check player marker
+        if (planeMarker) {
+            const markerPos = map.latLngToContainerPoint(planeMarker.getLatLng());
+            const dist = Math.sqrt(Math.pow(markerPos.x - x, 2) + Math.pow(markerPos.y - y, 2));
+            if (dist < this.DETECTION_RADIUS) {
+                return { type: 'player', marker: planeMarker };
+            }
+        }
+
+        return null;
+    },
+
+    isDraggable: function (hit) {
+        if (!hit) return false;
+        // Only waypoints are draggable in this implementation
+        return hit.type === 'waypoint';
+    },
+
+    updateDragTarget: function (latLng) {
+        if (!this.target || !this.target.marker) return;
+
+        if (this.target.type === 'waypoint') {
+            // Update waypoint position
+            this.target.marker.setLatLng(latLng);
+            activeRouteData[this.target.index].lat = latLng.lat;
+            activeRouteData[this.target.index].lon = latLng.lng;
+
+            // Redraw route
+            if (typeof renderMapRoutes === 'function') {
+                renderMapRoutes();
+            }
+        }
+    },
+
+    simulateClick: function (hit) {
+        if (!hit || !hit.marker) return;
+
+        // Visual feedback
+        this.showClickAnimation(this.x, this.y);
+
+        // Fire click event on the marker
+        if (hit.marker.fire) {
+            hit.marker.fire('click');
+        }
+
+        // Type-specific actions
+        if (hit.type === 'waypoint') {
+            if (typeof selectWaypoint === 'function') {
+                selectWaypoint(hit.index);
+            }
+        } else if (hit.type === 'poi') {
+            if (typeof selectPoi === 'function') {
+                selectPoi(hit.index);
+            }
+        }
+    },
+
+    showClickAnimation: function (x, y) {
+        const anim = document.createElement('div');
+        anim.className = 'pointer-click-anim';
+        anim.style.left = x + 'px';
+        anim.style.top = y + 'px';
+        document.body.appendChild(anim);
+        setTimeout(() => anim.remove(), 500);
+    }
+};
 const blockRealMouse = (e) => { if (VirtualPointer.active && e.isTrusted) { e.preventDefault(); e.stopPropagation(); } }; const eventsToBlock = ['mousedown', 'mouseup', 'mousemove', 'click', 'dblclick', 'pointerdown', 'pointerup', 'pointermove', 'contextmenu'];
 if (typeof eventsToBlock !== 'undefined') { eventsToBlock.forEach(evt => { window.addEventListener(evt, blockRealMouse, true); }); }
-socket.on('pointer_mode_status', function (data) { VirtualPointer.toggle(data.active); }); socket.on('pointer_update', function (data) { VirtualPointer.update(data.x, data.y, data.norm); }); socket.on('simulate_pointer_down', function (data) { VirtualPointer.press(data.x, data.y, data.norm); }); socket.on('simulate_pointer_up', function (data) { VirtualPointer.release(data.x, data.y, data.norm); });
+
+// Virtual Pointer Socket Events (matching server.py API)
+socket.on('pointer_mode_changed', function (data) {
+    VirtualPointer.toggle(data.active);
+});
+
+socket.on('pointer_update', function (data) {
+    // Server sends full state: { active, x, y, mode }
+    if (data.active !== undefined) {
+        VirtualPointer.toggle(data.active);
+    }
+    if (data.x !== undefined && data.y !== undefined) {
+        let px = data.x;
+        let py = data.y;
+
+        if (data.mode === 'pct') {
+            px = data.x * window.innerWidth;
+            py = data.y * window.innerHeight;
+            // Ensure within bounds?
+            // VirtualPointer.update logic might clamp, but let's pass calculated pixels
+        }
+
+        VirtualPointer.update(px, py, false);
+    }
+});
+
+socket.on('pointer_click_event', function (data) {
+    console.log('📥 Frontend received click event:', data);
+    // Server sends: { action: 'click' | 'down' | 'up' }
+    // Capture position to avoid race conditions if cursor moves during timeout
+    const x = VirtualPointer.x;
+    const y = VirtualPointer.y;
+    console.log('📍 Pointer position:', x, y, 'Active:', VirtualPointer.active);
+
+    if (data.action === 'down') {
+        console.log('⬇️ Calling VirtualPointer.press()');
+        VirtualPointer.press(x, y, false);
+    } else if (data.action === 'up') {
+        console.log('⬆️ Calling VirtualPointer.release()');
+        VirtualPointer.release(x, y, false);
+    } else if (data.action === 'click') {
+        // Capture coordinates to prevent race condition during timeout
+        const clickX = x;
+        const clickY = y;
+        console.log('🖱️ Simulating click at', clickX, clickY);
+        VirtualPointer.press(clickX, clickY, false);
+        setTimeout(() => VirtualPointer.release(clickX, clickY, false), 50);
+    }
+});
 // DEPRECATED: 'tactical' event caused duplicate markers. 
 // Logic now centralized in 'theater_state' above.
 // socket.on('tactical', function (packet) {});

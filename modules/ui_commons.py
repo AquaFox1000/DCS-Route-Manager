@@ -145,6 +145,46 @@ class JoyRecorder(QPushButton):
         else:
             super().keyPressEvent(event)
 
+class AxisRecorder(QPushButton):
+    startListening = pyqtSignal(str)
+    cancelled = pyqtSignal()
+    cleared = pyqtSignal(str)
+
+    def __init__(self, action_id, current_bind):
+        super().__init__("None")
+        self.action_id = action_id
+        self.update_display_text(current_bind)
+        self.setCheckable(True)
+        self.toggled.connect(self.on_toggle)
+        self.setStyleSheet("text-align: center; color: #888;")
+
+    def update_display_text(self, bind_list):
+        # Format: [DevName, AxisIdx, Invert, Scale]
+        label = "None"
+        if bind_list and len(bind_list) >= 2:
+             name = bind_list[0]; axis = bind_list[1]
+             short = name[:6] + ".." if len(name) > 6 else name
+             label = f"{short} [Ax{axis}]"
+        self.setText(label)
+
+    def on_toggle(self, checked):
+        if checked:
+            self.setText("Move Axis (Esc to Clear)...")
+            color = "#e67e22"
+            self.setStyleSheet(f"text-align: center; color: {color}; border: 1px solid {color};")
+            self.grabKeyboard()
+            self.startListening.emit(self.action_id)
+        else:
+            self.releaseKeyboard()
+            self.setStyleSheet("text-align: center; color: #888;")
+
+    def keyPressEvent(self, event):
+        if self.isChecked() and event.key() == Qt.Key_Escape:
+            self.setChecked(False)
+            self.cleared.emit(self.action_id)
+        else:
+            super().keyPressEvent(event)
+
 class HotkeyRecorder(QPushButton):
     hotkeyChanged = pyqtSignal(str)
     # Signal to bring mouse events back to the GUI thread

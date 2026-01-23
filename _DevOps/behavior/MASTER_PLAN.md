@@ -50,6 +50,48 @@
 11. [ ] **static/js/overlay.js** (Frontend Logic)
 12. [ ] **static/hud_profiles/** (HUD Templates)
 
+### Phase 3: Feature Expansion (User Requests)
+- [ ] **Virtual Pointer Expansion:**
+    - [x] **1. Input Manager Upgrade (`modules/input_manager.py`)** (Backend)
+        - [x] Add Axis Support (`pygame.JOYAXISMOTION` -> deadzone -> normalize).
+        - [x] Add Mouse Motion (Relative via hook, Absolute via screen mapping).
+        - [x] Add Digital Directional Logic (Buttons -> Axis).
+        - [x] Unify Signals: `pointer_motion(dx, dy, mode)` and `pointer_button(action, state)`.
+    - [x] **2. Overlay UI (`modules/overlay.py`)** (Configuration)
+        - [x] Create `PointerTab` Class.
+        - [x] Implement Activation Toggle & Bind.
+        - [x] Implement Movement Source Config (Analog/Digital).
+        - [x] Implement Interaction Config (Click/Hold/Drag).
+        - [x] Add Sensitivity & Deadzone Sliders.
+    - [x] **3. Server Bridge (`server.py`)** (State & Relay)
+        - [x] Implement `virtual_pointer_active` state & `virtual_cursor_pos`.
+        - [x] Handle `virtual_pointer_update` (Motion Relay).
+        - [x] Handle `virtual_click` (Interaction Relay).
+        - [x] Persist settings in `hud_config.json`.
+    - [x] **4. Frontend Map (`static/js/map.js` & `Templates/map.html`)** (Visuals)
+        - [x] Add `#virtual-cursor` element & styling.
+        - [x] Implement VirtualPointer object with state machine (IDLE/HOVER/DRAG).
+        - [x] Implement hit testing for waypoints, POIs, units, player.
+        - [x] Implement click interactions (< 500ms press).
+        - [x] Implement drag interactions for waypoints.
+        - [x] Align socket events with server API.
+        - [x] Block native mouse events when Pointer Mode is Active.
+    - [ ] **5. Enhanced Visual Feedback** (Phase 3.5 - Optional)
+        - [ ] Cursor shape changes when over draggable objects.
+        - [ ] Highlight hovered objects with glow/outline.
+        - [ ] Edge-snapping for waypoints.
+        - [ ] Custom cursors per interaction mode.
+    - [ ] **6. Advanced Interactions** (Phase 3.6 - Optional)
+        - [ ] Double-click support for waypoint editing.
+        - [ ] Right-click context menu for markers.
+        - [ ] Multi-select with modifier keys.
+        - [ ] Drag POIs (not just waypoints).
+    - [ ] **7. Performance Optimization** (Phase 3.7 - Optional)
+        - [ ] Throttle hit testing (requestAnimationFrame).
+        - [ ] Spatial indexing for large object counts.
+        - [ ] Minimize DOM updates during drag.
+        - [ ] Configurable detection radius (DPI-aware).
+
 ## 📝 Known Issues / Constraints
 * **Backups:** Zip files are stored in `.\_DevOps\backups`.
 * **Node.js:** Required for `npm` commands (installed via winget).

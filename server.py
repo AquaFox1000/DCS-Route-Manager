@@ -224,11 +224,88 @@ def handle_delete_point(data):
     save_json_file(CLICKABLE_FILE, new_list)
     socketio.emit('msg', f"Deleted Point {p_id}")
 
+    socketio.emit('msg', f"Deleted Point {p_id}")
+
+# --- POINTER BRIDGE (Phase 3.3) ---
+virtual_pointer_state = { "active": False, "x": 0.5, "y": 0.5, "mode": "pct" } # Default center 50%
+
+@socketio.on('virtual_pointer_update')
+def handle_pointer_update(data):
+    """ 
+    Received from Overlay (InputManager).
+    data: { 'dx': float, 'dy': float, 'mode': 'rel'/'abs'/'pct' }
+    """
+    global virtual_pointer_state
+    
+    mode = data.get('mode', 'rel')
+    
+    # Update State - Unify to Percentage (0.0 - 1.0)
+    if mode == 'rel':
+        # Assume relative moves are in pixels (e.g. from Joystick/Keys)
+        # Normalize assuming a standard virtual canvas reference (e.g. 1920x1080)
+        REF_W, REF_H = 1920.0, 1080.0
+        SENSITIVITY = 1.0 
+        
+        dx_pct = (data.get('dx', 0) / REF_W) * SENSITIVITY
+        dy_pct = (data.get('dy', 0) / REF_H) * SENSITIVITY
+        
+        current_x = virtual_pointer_state.get('x', 0.5)
+        current_y = virtual_pointer_state.get('y', 0.5)
+        
+        # Determine if current state is pixels (legacy) or pct
+        if current_x > 2.0: current_x /= REF_W
+        if current_y > 2.0: current_y /= REF_H
+
+        virtual_pointer_state['x'] = max(0.0, min(1.0, current_x + dx_pct))
+        virtual_pointer_state['y'] = max(0.0, min(1.0, current_y + dy_pct))
+        virtual_pointer_state['mode'] = 'pct'
+        
+    elif mode == 'abs':
+        # Legacy absolute in pixels - treat as raw input for safety, but try to normalize if huge
+        val_x = data.get('x', 0)
+        val_y = data.get('y', 0)
+        if val_x > 1.0: val_x /= 1920.0
+        if val_y > 1.0: val_y /= 1080.0
+        
+        virtual_pointer_state['x'] = max(0.0, min(1.0, val_x))
+        virtual_pointer_state['y'] = max(0.0, min(1.0, val_y))
+        virtual_pointer_state['mode'] = 'pct'
+
+    elif mode == 'pct':
+        virtual_pointer_state['x'] = max(0.0, min(1.0, data.get('x', 0.5)))
+        virtual_pointer_state['y'] = max(0.0, min(1.0, data.get('y', 0.5)))
+        virtual_pointer_state['mode'] = 'pct'
+
+    socketio.emit('pointer_update', virtual_pointer_state)
+
+@socketio.on('toggle_pointer_mode')
+def handle_pointer_toggle(data):
+    global virtual_pointer_state
+    
+    new_state = data.get('active', False)
+    virtual_pointer_state['active'] = new_state
+    
+    # RESET TO CENTER ON ACTIVATION
+    if new_state:
+        virtual_pointer_state['x'] = 0.5
+        virtual_pointer_state['y'] = 0.5
+        virtual_pointer_state['mode'] = 'pct'
+        
+    print(f"🖱️ Pointer Mode: {'ON' if virtual_pointer_state['active'] else 'OFF'}")
+    socketio.emit('pointer_mode_changed', virtual_pointer_state)
+
+@socketio.on('virtual_click')
+def handle_virtual_click(data):
+    # data: { 'action': 'click' / 'down' / 'up' }
+    print(f"📤 Relaying click to frontend: {data}")
+    # Pass through to frontend
+    socketio.emit('pointer_click_event', data)
+
 @socketio.on('interact_at_mouse')
 def handle_interaction(data=None):
     if not clickable_mode_enabled or not last_known_telemetry: return
 
-    mouse_global = MouseTracker.get_cursor_position()
+    mouse_global = InputManager.get_cursor_position()
     if not mouse_global: return
         
     settings = get_current_settings() 

@@ -22,7 +22,13 @@
         "test_single_7": "",
         "test_single_8": "",
         "test_single_9": "",
-        "mark_click_point": ""
+        "mark_click_point": "",
+        "pointer_toggle": "ctrl+shift+q",
+        "pointer_up": "8",
+        "pointer_down": "5",
+        "pointer_left": "4",
+        "pointer_right": "6",
+        "pointer_click": "mouse_back"
     },
     "joystick": {
         "cycle_next": [
@@ -33,8 +39,8 @@
             false
         ],
         "engageAP": [
-            "Throttle - HOTAS Warthog",
-            1,
+            "",
+            0,
             "Throttle - HOTAS Warthog",
             0,
             false
@@ -45,8 +51,25 @@
             "",
             0,
             false
+        ],
+        "pointer_click": []
+    },
+    "axes": {
+        "pointer_x": [
+            "Throttle - HOTAS Warthog",
+            0,
+            false,
+            0.36
+        ],
+        "pointer_y": [
+            "Throttle - HOTAS Warthog",
+            1,
+            false,
+            0.36
         ]
     },
+    "digital_sensitivity": 1.0,
+    "mouse_sensitivity": 1.0,
     "test_ids": {
         "test_single_1": 197,
         "test_single_2": 199,
@@ -58,5 +81,6 @@
         "test_single_10": 97,
         "test_single_8": 200,
         "test_single_9": 215
-    }
+    },
+    "mouse_enabled": true
 }

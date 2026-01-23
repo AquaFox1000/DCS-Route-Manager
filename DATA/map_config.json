@@ -3,13 +3,15 @@
     "altUnit": "m",
     "distUnit": "km",
     "defAlt": 3000,
-    "layer": "winter",
-    "visibleRoutes": [],
+    "layer": "dark",
+    "visibleRoutes": [
+        "1234"
+    ],
     "navFlyBy": false,
     "navCourseLine": false,
     "colors": {
         "latlon": "#00ffcc",
-        "mgrs": "#a62121",
+        "mgrs": "#733f59",
         "mgrsGzd": "#988035"
     },
     "overlays": {
@@ -18,13 +20,13 @@
         "roads": false,
         "labels": true,
         "buildings": false,
-        "hillshade": false
+        "hillshade": true
     },
     "view": {
-        "zoom": 9,
+        "zoom": 10,
         "center": {
-            "lat": 41.859461975535886,
-            "lng": 41.65048461963946
+            "lat": 42.29762739128458,
+            "lng": 41.71028137207032
         }
     },
     "threatFill": 0,
@@ -121,6 +123,6 @@
         "hudMode": 0,
         "liveAir": false,
         "ptrStyle": "cross",
-        "ptrColor": "#00ff00"
+        "ptrColor": "#028d02"
     }
 }

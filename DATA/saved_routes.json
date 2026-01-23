@@ -5,8 +5,8 @@
         "pois": [
             {
                 "color": "#e74c3c",
-                "lat": 42.20567900717104,
-                "lon": 41.49053407150949,
+                "lat": 42.132358253344094,
+                "lon": 41.71368464463264,
                 "name": "Mark",
                 "sidc": "SHGPUCA---",
                 "threatDeadly": 2,
@@ -15,26 +15,16 @@
                 "threatDetectEnabled": false
             },
             {
-                "color": "#ffff00",
-                "lat": 42.13328982146812,
-                "lon": 41.90957972590358,
+                "color": "#3498db",
+                "lat": 42.238722107314615,
+                "lon": 41.21392554732536,
                 "name": "Mark",
-                "sidc": "PIN",
-                "threatDeadly": 0,
+                "sidc": "SFGPUCDG--",
+                "threatDeadly": 2,
                 "threatDeadlyEnabled": false,
-                "threatDetect": 0,
-                "threatDetectEnabled": false
-            },
-            {
-                "color": "#e74c3c",
-                "lat": 41.97913622385729,
-                "lon": 41.888811343742745,
-                "name": "Mark",
-                "sidc": "SHGPUCDM--",
-                "threatDeadly": 18,
-                "threatDeadlyEnabled": true,
-                "threatDetect": 25,
-                "threatDetectEnabled": true
+                "threatDetect": 4,
+                "threatDetectEnabled": true,
+                "threatVisible": true
             }
         ],
         "routes": {

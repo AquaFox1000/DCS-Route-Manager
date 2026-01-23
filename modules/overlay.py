@@ -21,7 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # NEW MODULES
 from modules.input_manager import InputManager, InputBinder, OverlayConfig
-from modules.ui_commons import STYLES, QRDialog, JoyRecorder, HotkeyRecorder
+from modules.ui_commons import STYLES, QRDialog, JoyRecorder, HotkeyRecorder, AxisRecorder
 
 # --- CONFIGURATION ---
 SERVER_URL = "http://127.0.0.1:5000"
@@ -198,6 +198,277 @@ class ControlsTab(QWidget):
             btn.setText("✔ Controls Saved!")
             btn.setStyleSheet("margin-top: 20px; background-color: #2b4a3b; color: #00ff00; border: 1px solid #00ff00; font-weight: bold;")
             QTimer.singleShot(1000, lambda: (btn.setText("Save & Apply Controls"), btn.setStyleSheet("margin-top: 20px; background-color: #2b4a3b; color: #8fbc8f;")))
+
+
+# --- POINTER TAB ---
+class PointerTab(QWidget):
+    def __init__(self, parent_win, config, input_mgr):
+        super().__init__()
+        self.parent_win = parent_win
+        self.config = config
+        self.input_mgr = input_mgr
+        self.config_handler = parent_win.config_handler
+        
+        self.hotkeys = self.config["hotkeys"]
+        self.joy_binds = self.config["joystick"]
+        self.axes_binds = self.config["axes"]
+        
+        self.joy_recorders = {}
+        self.axis_recorders = {}
+        self.active_recorder = None # For both axis and button
+        
+        self.setup_ui()
+        self.input_mgr.bind_detected.connect(self.on_joy_input)
+        self.input_mgr.axis_detected.connect(self.on_axis_input)
+
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # 1. Activation
+        grp_activ = QGroupBox("ACTIVATION")
+        l_activ = QGridLayout()
+        self.add_button_bind(l_activ, 0, "Toggle Pointer Mode", "pointer_toggle")
+        grp_activ.setLayout(l_activ)
+        layout.addWidget(grp_activ)
+
+        # 2. Analog Movement (Axes)
+        grp_analog = QGroupBox("ANALOG MOVEMENT (Joystick/Controller)")
+        l_analog = QGridLayout()
+        l_analog.addWidget(QLabel("<b>Axis Function</b>"), 0, 0)
+        l_analog.addWidget(QLabel("<b>Bind</b>"), 0, 1)
+        l_analog.addWidget(QLabel("<b>Invert</b>"), 0, 2)
+        l_analog.addWidget(QLabel("<b>Sensitivity</b>"), 0, 3)
+        
+        self.add_axis_bind(l_analog, 1, "Pointer X (Horizontal)", "pointer_x")
+        self.add_axis_bind(l_analog, 2, "Pointer Y (Vertical)", "pointer_y")
+        grp_analog.setLayout(l_analog)
+        layout.addWidget(grp_analog)
+
+        # 3. Digital Movement (Buttons/Keys)
+        grp_dig = QGroupBox("DIGITAL MOVEMENT (D-Pad/Keys)")
+        l_dig = QGridLayout()
+        self.add_button_bind(l_dig, 0, "Move Up", "pointer_up")
+        self.add_button_bind(l_dig, 1, "Move Down", "pointer_down")
+        self.add_button_bind(l_dig, 2, "Move Left", "pointer_left")
+        self.add_button_bind(l_dig, 3, "Move Right", "pointer_right")
+        
+        # Digital Sensitivity
+        l_dig.addWidget(QLabel("Speed/Sensitivity:"), 4, 0)
+        self.slider_dig_sens = QSlider(Qt.Horizontal)
+        self.slider_dig_sens.setRange(10, 500) # 10% to 500%
+        self.slider_dig_sens.setValue(int(self.config.get("digital_sensitivity", 1.0) * 100))
+        self.lbl_dig_sens = QLabel(f"{self.slider_dig_sens.value()}%")
+        self.slider_dig_sens.valueChanged.connect(lambda v: self.lbl_dig_sens.setText(f"{v}%"))
+        l_dig.addWidget(self.slider_dig_sens, 4, 1, 1, 2)
+        l_dig.addWidget(self.lbl_dig_sens, 4, 3)
+
+        grp_dig.setLayout(l_dig)
+        layout.addWidget(grp_dig)
+
+        # --- MOUSE INPUT [NEW] ---
+        grp_mouse = QGroupBox("MOUSE INPUT")
+        # Removing explicit setStyleSheet as STYLES is a string and applied globally
+        gm_layout = QVBoxLayout()
+        grp_mouse.setLayout(gm_layout)
+        
+        # Checkbox: Enable Mouse Control
+        self.chk_mouse = QCheckBox("Enable Mouse Control")
+        # Load state from config (default False to avoid interference)
+        self.chk_mouse.setChecked(self.config.get("mouse_enabled", False))
+        self.chk_mouse.toggled.connect(self.toggle_mouse)
+        gm_layout.addWidget(self.chk_mouse)
+        
+        # Mode Section
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Mode:"))
+        self.combo_mouse_mode = QComboBox()
+        self.combo_mouse_mode.addItems(["Relative (Standard)", "Absolute (Tablet)"])
+        # Load mode
+        curr_mode = self.config.get("mouse_mode", "rel")
+        self.combo_mouse_mode.setCurrentIndex(1 if curr_mode == "abs" else 0)
+        self.combo_mouse_mode.currentIndexChanged.connect(self.change_mouse_mode)
+        mode_layout.addWidget(self.combo_mouse_mode)
+        gm_layout.addLayout(mode_layout)
+
+        # Mouse Sensitivity
+        sens_layout = QHBoxLayout()
+        sens_layout.addWidget(QLabel("Sensitivity:"))
+        self.slider_mouse_sens = QSlider(Qt.Horizontal)
+        self.slider_mouse_sens.setRange(10, 500)
+        self.slider_mouse_sens.setValue(int(self.config.get("mouse_sensitivity", 1.0) * 100))
+        self.lbl_mouse_sens = QLabel(f"{self.slider_mouse_sens.value()}%")
+        self.slider_mouse_sens.valueChanged.connect(lambda v: self.lbl_mouse_sens.setText(f"{v}%"))
+        sens_layout.addWidget(self.slider_mouse_sens)
+        sens_layout.addWidget(self.lbl_mouse_sens)
+        gm_layout.addLayout(sens_layout)
+
+        layout.addWidget(grp_mouse)
+
+        # Apply initial mouse state
+        self.input_mgr.enable_mouse_hook(self.chk_mouse.isChecked())
+
+        # 4. Interaction
+        grp_int = QGroupBox("INTERACTION")
+        l_int = QGridLayout()
+        self.add_button_bind(l_int, 0, "Left Click / Interact", "pointer_click")
+        # self.add_button_bind(l_int, 1, "Right Click / Context", "pointer_context") # Future
+        grp_int.setLayout(l_int)
+        layout.addWidget(grp_int)
+
+        save_btn = QPushButton("Save Pointer Settings")
+        save_btn.clicked.connect(self.save_settings)
+        save_btn.setStyleSheet("margin-top: 20px; background-color: #2b4a3b; color: #8fbc8f; padding: 10px; font-weight: bold;")
+        layout.addWidget(save_btn)
+        
+        layout.addStretch()
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        container.setLayout(layout)
+        scroll.setWidget(container)
+        
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(scroll)
+        self.setLayout(main_layout)
+
+    def toggle_mouse(self, checked):
+        self.config["mouse_enabled"] = checked
+        self.input_mgr.config["mouse_enabled"] = checked # SYNC TO INPUT MANAGER
+        self.input_mgr.enable_mouse_hook(checked)
+        self.config_handler.save(self.config)
+        
+    def change_mouse_mode(self, idx):
+        mode = "abs" if idx == 1 else "rel"
+        self.config["mouse_mode"] = mode
+        self.input_mgr.config["mouse_mode"] = mode # SYNC TO INPUT MANAGER
+        self.config_handler.save(self.config)
+
+    def add_button_bind(self, layout, row, label, action_id):
+        layout.addWidget(QLabel(label), row, 0)
+        
+        # Keyboard
+        hk_rec = HotkeyRecorder(self.hotkeys.get(action_id, ""))
+        hk_rec.hotkeyChanged.connect(lambda val, k=action_id: self.update_key_config(k, val))
+        layout.addWidget(hk_rec, row, 1)
+        
+        # Joystick
+        curr = self.joy_binds.get(action_id, [])
+        j_rec = JoyRecorder(action_id, "main", curr)
+        j_rec.startListening.connect(self.enter_bind_mode)
+        j_rec.cancelled.connect(self.cancel_bind_mode)
+        j_rec.cleared.connect(self.clear_joy_bind)
+        layout.addWidget(j_rec, row, 2)
+        
+        self.joy_recorders[action_id] = j_rec
+
+    def add_axis_bind(self, layout, row, label, action_id):
+        layout.addWidget(QLabel(label), row, 0)
+        
+        curr = self.axes_binds.get(action_id, [])
+        rec = AxisRecorder(action_id, curr)
+        rec.startListening.connect(self.enter_bind_mode)
+        rec.cancelled.connect(self.cancel_bind_mode)
+        rec.cleared.connect(self.clear_axis_bind)
+        layout.addWidget(rec, row, 1)
+        
+        # Invert
+        chk = QCheckBox("Invert")
+        chk.setChecked(curr[2] if len(curr) > 2 else False)
+        layout.addWidget(chk, row, 2)
+        
+        # Scale (Sensitivity)
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(1, 200)
+        slider.setValue(int(curr[3] * 100) if len(curr) > 3 else 100)
+        layout.addWidget(slider, row, 3)
+        
+        self.axis_recorders[action_id] = {"rec": rec, "invert": chk, "scale": slider}
+
+    def update_key_config(self, key, val):
+        self.hotkeys[key] = val
+
+    def enter_bind_mode(self, action_id, mode=None):
+        # Clear others
+        for rec in self.joy_recorders.values():
+            if rec.action_id != action_id: rec.setChecked(False)
+        for d in self.axis_recorders.values():
+            if d["rec"].action_id != action_id: d["rec"].setChecked(False)
+            
+        self.active_recorder = {"id": action_id, "mode": mode} # mode is 'main' for btn or None for axis
+        self.input_mgr.binding_mode = True
+
+    def cancel_bind_mode(self):
+        self.active_recorder = None
+        self.input_mgr.binding_mode = False
+
+    def clear_joy_bind(self, action_id, mode):
+        self.joy_binds[action_id] = []
+        self.joy_recorders[action_id].update_display_text([])
+
+    def clear_axis_bind(self, action_id):
+        self.axes_binds[action_id] = []
+        self.axis_recorders[action_id]["rec"].update_display_text([])
+
+    def on_joy_input(self, dev_name, btn_idx):
+        if not self.active_recorder or self.active_recorder.get("mode") is None: return
+        
+        aid = self.active_recorder["id"]
+        # Basic bind: [Dev, Btn]
+        new_bind = [dev_name, btn_idx]
+        self.joy_binds[aid] = new_bind
+        self.joy_recorders[aid].update_display_text(new_bind)
+        self.joy_recorders[aid].setChecked(False)
+        self.cancel_bind_mode()
+
+    def on_axis_input(self, dev_name, axis_idx):
+        if not self.active_recorder or self.active_recorder.get("mode") is not None: return
+        
+        aid = self.active_recorder["id"]
+        # Basic bind: [Dev, Axis, Invert(False), Scale(1.0)]
+        # We preserve existing config for Invert/Scale if possible, but usually binding resets it or we just take defaults
+        # Let's take current UI values
+        args = self.axis_recorders[aid]
+        invert = args["invert"].isChecked()
+        scale = args["scale"].value() / 100.0
+        
+        new_bind = [dev_name, axis_idx, invert, scale]
+        self.axes_binds[aid] = new_bind
+        
+        args["rec"].update_display_text(new_bind)
+        args["rec"].setChecked(False)
+        self.cancel_bind_mode()
+
+    def save_settings(self):
+        # Update Axis Params (Invert/Scale) even if not rebound
+        for aid, args in self.axis_recorders.items():
+            curr = self.axes_binds.get(aid, [])
+            if len(curr) >= 2:
+                # Update Invert/Scale indices
+                while len(curr) < 4: curr.append(0)
+                curr[2] = args["invert"].isChecked()
+                curr[3] = args["scale"].value() / 100.0
+                self.axes_binds[aid] = curr
+
+        # Save Sensitivity Settings
+        self.config["digital_sensitivity"] = self.slider_dig_sens.value() / 100.0
+        self.config["mouse_sensitivity"] = self.slider_mouse_sens.value() / 100.0
+
+        # SYNC ALL TO INPUT MANAGER
+        self.input_mgr.config.update(self.config)
+
+        self.config_handler.save(self.config)
+        self.parent_win.overlay.update_global_hotkeys() # Reload hotkeys
+        
+        # Inline Feedback
+        btn = self.sender()
+        if btn:
+            original_text = "Save Pointer Settings"
+            original_style = "margin-top: 20px; background-color: #2b4a3b; color: #8fbc8f; padding: 10px; font-weight: bold;"
+            
+            btn.setText("✔ Settings Saved!")
+            btn.setStyleSheet("margin-top: 20px; background-color: #2b4a3b; color: #00ff00; border: 1px solid #00ff00; padding: 10px; font-weight: bold;")
+            QTimer.singleShot(1000, lambda: (btn.setText(original_text), btn.setStyleSheet(original_style)))
 
 
 class HUDTab(QWidget):
@@ -642,6 +913,9 @@ class SettingsWindow(QWidget):
         self.tab_controls = ControlsTab(self, self.config, self.input_mgr)
         self.tabs.addTab(self.tab_controls, "Controls")
 
+        self.tab_pointer = PointerTab(self, self.config, self.input_mgr)
+        self.tabs.addTab(self.tab_pointer, "Virtual Pointer")
+
         self.tab_clickable = ClickableTab(self, self.config, self.overlay.bridge)
         self.tabs.addTab(self.tab_clickable, "Clickable Cockpit")
         
@@ -762,6 +1036,7 @@ class HotkeyBridge(QObject):
     force_settings = pyqtSignal(bool)
     trigger_test_single = pyqtSignal(str)      
     trigger_test_hold = pyqtSignal(str, bool)
+    toggle_pointer_mode = pyqtSignal()
 
     def button_press(self, action_name):
         if action_name == "toggle_hud": self.toggle_hud.emit()
@@ -777,6 +1052,7 @@ class HotkeyBridge(QObject):
         elif action_name == "engageAP" : self.toggleAP.emit()
         elif action_name == "mark_click_point": self.trigger_mark_click.emit()
         elif action_name == "interact": self.trigger_interact.emit()
+        elif action_name == "pointer_toggle": self.toggle_pointer_mode.emit()
         elif action_name.startswith("test_single_"): self.handle_test_single(action_name)
 
 
@@ -791,6 +1067,32 @@ class HotkeyBridge(QObject):
     def handle_test_hold(self, action_name, state):
         self.trigger_test_hold.emit(action_name, state)    
 
+    # --- POINTER METHODS ---
+    def send_pointer_motion(self, d1, d2, mode):
+        # Throttle? For now direct relay.
+        # d1, d2 = dx, dy (if relative) or x, y (if abs)
+        payload = {'dx': d1, 'dy': d2, 'mode': 'rel'} # Default to rel for now
+        if mode.startswith('axis') or mode == 'mouse_rel':
+             payload = {'dx': d1, 'dy': d2, 'mode': 'rel'}
+        elif mode == 'abs' or mode == 'mouse_abs':
+             payload = {'x': d1, 'y': d2, 'mode': 'abs'}
+        elif mode == 'mouse_pct':
+             payload = {'x': d1, 'y': d2, 'mode': 'pct'}
+        
+        # We need access to browser to emit. 
+        # HotkeyBridge doesn't store browser ref directly, it's connected to signals usually.
+        # But here we need to emit socket event.
+        # We can emit a PyQt Signal that HUDOverlay listens to, OR we can inject the browser ref.
+        self.trigger_pointer_socket.emit('virtual_pointer_update', payload)
+
+    def send_pointer_button(self, action, state):
+        # action: "click"
+        # state: True (Down), False (Up)
+        evt = 'down' if state else 'up'
+        self.trigger_pointer_socket.emit('virtual_click', {'action': evt})
+
+    trigger_pointer_socket = pyqtSignal(str, dict) # event, data    
+
 # --- MAIN APP ---
 class HUDOverlay(QMainWindow):
     def __init__(self, config_manager, bridge_ref, input_mgr):
@@ -800,6 +1102,19 @@ class HUDOverlay(QMainWindow):
         self.bridge = bridge_ref
         self.input_mgr = input_mgr
         
+        self.pointer_active = False # Local State
+        
+        # Connect Input Manager Signals
+        self.input_mgr.pointer_motion.connect(self.bridge.send_pointer_motion)
+        self.input_mgr.pointer_button.connect(self.bridge.send_pointer_button)
+        self.bridge.trigger_pointer_socket.connect(self.emit_socket_event)
+        
+        # Pointer Toggle Logic
+        # We intercept the 'pointer_toggle' button press in HotkeyBridge via button_press?
+        # HotkeyBridge emits specific signals. We should add one for pointer toggle.
+        self.bridge.toggle_pointer_mode.connect(self.toggle_pointer)
+
+
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowTransparentForInput); self.setAttribute(Qt.WA_TranslucentBackground); self.setAttribute(Qt.WA_NoSystemBackground)
         self.browser = QWebEngineView(); self.browser.setAttribute(Qt.WA_TranslucentBackground); self.browser.setStyleSheet("background: transparent;"); self.browser.page().setBackgroundColor(Qt.transparent); self.browser.setUrl(QUrl(HUD_URL)); self.setCentralWidget(self.browser)
         
@@ -815,6 +1130,53 @@ class HUDOverlay(QMainWindow):
     def toggle_testing(self): (self.testing_window.hide() if self.testing_window.isVisible() else (self.testing_window.show(), self.testing_window.activateWindow()))
 
     def set_overlay_visible(self, visible): (self.show() if visible else self.hide())
+
+    def emit_socket_event(self, event, data):
+        # Intercept Absolute Mouse movement to make it Monitor-Relative %
+        if event == 'virtual_pointer_update' and data.get('mode') == 'abs':
+            # Transform Global Coordinates -> Percentage of Current Monitor
+            global_x = data.get('x', 0)
+            global_y = data.get('y', 0)
+            
+            # Find which screen the mouse is on
+            screens = QApplication.screens()
+            target_screen = None
+            for s in screens:
+                if s.geometry().contains(int(global_x), int(global_y)):
+                    target_screen = s
+                    break
+            
+            if target_screen:
+                rect = target_screen.geometry()
+                pct_x = (global_x - rect.x()) / rect.width()
+                pct_y = (global_y - rect.y()) / rect.height()
+                
+                # Clamp
+                pct_x = max(0.0, min(1.0, pct_x))
+                pct_y = max(0.0, min(1.0, pct_y))
+                
+                data['x'] = pct_x
+                data['y'] = pct_y
+                data['mode'] = 'pct'
+            else:
+                # Fallback to window relative if screen not found? Or just 0.5
+                 data['x'] = 0.5
+                 data['y'] = 0.5
+                 data['mode'] = 'pct'
+
+        # Always emit pointer-related events (server manages active state)
+        if 'pointer' in event or event in ['toggle_pointer_mode', 'virtual_pointer_update', 'virtual_click']:
+            self.browser.page().runJavaScript(f"socket.emit('{event}', {json.dumps(data)})")
+        elif self.pointer_active:
+            self.browser.page().runJavaScript(f"socket.emit('{event}', {json.dumps(data)})")
+
+    def toggle_pointer(self):
+        self.pointer_active = not self.pointer_active
+        # Reset mouse relative tracking when activating
+        if self.pointer_active:
+            self.input_mgr.reset_mouse_state()
+            
+        self.emit_socket_event('toggle_pointer_mode', {'active': self.pointer_active})
     def set_settings_visible(self, visible): (self.settings_window.show() if visible else self.settings_window.hide())
 
     def update_global_hotkeys(self):
@@ -840,6 +1202,34 @@ class HUDOverlay(QMainWindow):
             bind("engageAP", self.bridge.toggleAP)
             bind("mark_click_point", self.bridge.trigger_mark_click)
             bind("interact", self.bridge.trigger_interact)
+            bind("pointer_toggle", self.bridge.toggle_pointer_mode)  # ADDED: Pointer toggle keybind
+            
+            # Pointer click for keyboard/mouse buttons - needs DOWN and UP events
+            pointer_click_key = hk.get("pointer_click")
+            if pointer_click_key and isinstance(pointer_click_key, str) and pointer_click_key.strip():
+                # 1. Try Mouse Button State
+                if InputBinder.bind_mouse_button_state(
+                    pointer_click_key,
+                    lambda: self.bridge.send_pointer_button("click", True),   # DOWN
+                    lambda: self.bridge.send_pointer_button("click", False)   # UP
+                ):
+                    print(f"✅ Bound pointer_click (mouse) to: {pointer_click_key}")
+                
+                # 2. Try Keyboard Key State
+                elif InputBinder.bind_keyboard_state(
+                    pointer_click_key,
+                    lambda: self.bridge.send_pointer_button("click", True),   # DOWN
+                    lambda: self.bridge.send_pointer_button("click", False)   # UP
+                ):
+                    print(f"✅ Bound pointer_click (key) to: {pointer_click_key}")
+                
+                # 3. Fallback (Complex Hotkeys or errors) - Simulate Click
+                else:
+                    InputBinder.bind(pointer_click_key, lambda: (
+                        self.bridge.send_pointer_button("click", True),
+                        QTimer.singleShot(50, lambda: self.bridge.send_pointer_button("click", False))
+                    ))
+                    print(f"⚠️ Bound pointer_click (simulated logic) to: {pointer_click_key}")
 
             for action_name, key_val in hk.items():
                 if not key_val or not isinstance(key_val, str) or not key_val.strip(): continue
@@ -857,7 +1247,7 @@ class HUDOverlay(QMainWindow):
                         keyboard.on_release_key(key_val, lambda e, n=action_name: self.bridge.trigger_test_hold.emit(n, False))
                     except: pass
             
-            print("Input binds refreshed.")
+            print("✅ Input binds refreshed (including pointer_toggle).")
         except Exception as e: 
             print(f"Bind Error: {e}")
 
@@ -888,6 +1278,17 @@ if __name__ == '__main__':
     
     # Init Input Manager (Joystick/Hardware)
     input_mgr = InputManager(config)
+    
+    # Capture Screen Geometry for Absolute Mouse Mode
+    def update_screens():
+        screens = []
+        for s in app.screens():
+            g = s.geometry()
+            screens.append({'x': g.x(), 'y': g.y(), 'w': g.width(), 'h': g.height()})
+        input_mgr.set_screen_geometry(screens)
+    
+    update_screens() # Initial capture
+    
     input_mgr.start()
     
     # Init Overlay
