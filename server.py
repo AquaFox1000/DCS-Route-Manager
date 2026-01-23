@@ -1,6 +1,6 @@
 # server.py 
-from gevent import monkey
-monkey.patch_all()
+# from gevent import monkey
+# monkey.patch_all()
 
 # --- 1. IMPORTS (STDLIB -> 3RD PARTY -> LOCAL) ---
 import socket
@@ -13,6 +13,14 @@ import time
 import keyboard 
 import subprocess
 import atexit
+import logging
+
+# Configure Logging to standard output to avoid "No handler found" warnings
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Reduce verbosity of Werkzeug and EngineIO if needed
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
+logging.getLogger('engineio').setLevel(logging.WARNING)
+logging.getLogger('socketio').setLevel(logging.WARNING)
 
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_socketio import SocketIO
@@ -22,6 +30,7 @@ from modules.nav_computer import NavComputer
 from modules.utils import MathUtils
 from modules.input_manager import InputManager
 from modules.tcp_connector import DCSHookClient
+from modules.network_manager import NetworkManager
 
 # --- 2. CONFIGURATION ---
 UDP_IP = "127.0.0.1"
@@ -66,10 +75,12 @@ last_metadata = None # Cache for player context
 
 # --- 4. FLASK & MODULE INITIALIZATION ---
 app = Flask(__name__, static_folder='state')
-socketio = SocketIO(app, cors_allowed_origins='*', async_mode='gevent')
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
 # Initialize Modules
 nav = NavComputer()
+net_man = NetworkManager(flask_socketio=socketio, saved_routes_file=ROUTES_FILE, saved_pois_file=POIS_FILE)
+net_man.start_daemon()
 
 # Custom callback for TCP messages
 def handle_tcp_message(event_name, data):
@@ -432,6 +443,100 @@ def handle_settings_update(data):
     hud_data["profiles"][curr].update(data); save_json_file(HUD_CONFIG_FILE, hud_data)
     socketio.emit('apply_settings', hud_data["profiles"][curr])
 
+@socketio.on('toggle_share_route')
+def handle_toggle_share_route(data):
+    name = data.get('id') # Frontend sends name as id
+    state = data.get('state', False)
+    if state:
+        routes = load_json_file(ROUTES_FILE, {})
+        if name in routes:
+            r_data = routes[name]
+            r_data['name'] = name # Ensure name is attached
+            net_man.send_share_item('share_route', r_data)
+            socketio.emit('msg', f"Shared Route: {name}")
+
+@socketio.on('toggle_share_poi')
+def handle_toggle_share_poi(data):
+    idx = data.get('id')
+    state = data.get('state', False)
+    if state:
+        pois = load_json_file(POIS_FILE, [])
+        if 0 <= idx < len(pois):
+            p_data = pois[idx]
+            p_data['id'] = idx # Ensure ID/Index is attached logic
+            net_man.send_share_item('share_poi', p_data)
+            socketio.emit('msg', f"Shared POI T{idx+1}")
+
+@socketio.on('toggle_share_mission')
+def handle_toggle_share_mission(data):
+    name = data.get('id')
+    state = data.get('state', False)
+    if state:
+        # Load from ROUTES_FILE which holds the missions dict
+        missions = load_json_file(ROUTES_FILE, {})
+        if name in missions:
+            m_data = missions[name]
+            m_data['name'] = name
+            net_man.send_share_item('share_mission', m_data)
+            socketio.emit('msg', f"Shared Mission: {name}")
+
+@socketio.on('toggle_coop_mission')
+def handle_toggle_coop_mission(data):
+    name = data.get('id')
+    if data.get('state'):
+        missions = load_json_file(ROUTES_FILE, {})
+        if name in missions:
+            m_data = missions[name]
+            m_data['name'] = name
+            m_data['coop'] = True
+            net_man.send_share_item('share_mission', m_data)
+            socketio.emit('msg', f"Co-op Mission Initiated: {name}")
+
+@socketio.on('toggle_coop_poi')
+def handle_toggle_coop_poi(data):
+    idx = data.get('id')
+    if data.get('state'):
+        pois = load_json_file(POIS_FILE, [])
+        if 0 <= idx < len(pois):
+            p_data = pois[idx]
+            p_data['id'] = idx
+            p_data['coop'] = True
+            net_man.send_share_item('share_poi', p_data)
+            socketio.emit('msg', f"Co-op POI Initiated: T{idx+1}")
+
+@socketio.on('toggle_share_all_pois')
+def handle_toggle_share_all_pois(data):
+    if data.get('state'):
+        pois = load_json_file(POIS_FILE, [])
+        count = 0
+        for i, p_data in enumerate(pois):
+            p_data['id'] = i
+            net_man.send_share_item('share_poi', p_data)
+            count += 1
+        socketio.emit('msg', f"Shared All {count} POIs")
+
+@socketio.on('toggle_coop_all_pois')
+def handle_toggle_coop_all_pois(data):
+    if data.get('state'):
+        pois = load_json_file(POIS_FILE, [])
+        count = 0
+        for i, p_data in enumerate(pois):
+            p_data['id'] = i
+            p_data['coop'] = True
+            net_man.send_share_item('share_poi', p_data)
+            count += 1
+        socketio.emit('msg', f"Co-op All {count} POIs Initiated")
+
+@socketio.on('update_mp_settings')
+def handle_mp_settings_update(data):
+    # data: { setting: key, value: val }
+    # Broadcast to other clients (e.g. shared threat rings capability)?
+    # For now just log
+    print(f"MP Setting: {data}")
+    # If Coop mode, maybe update NetworkManager state
+    if data.get('setting') == 'shareAll':
+        pass # Handle share all logic?
+
 @socketio.on('set_active_wp')
 def handle_set_active(data):
     global last_standard_route_cache, active_route_name 
@@ -485,6 +590,80 @@ def handle_dcs_key(data):
     except Exception as e: print(f"❌ Key Emulation Error: {e}")
 
 # ... [Flask Routes] ...
+@app.route('/api/mp/status', methods=['GET'])
+def get_mp_status():
+    return jsonify(net_man.get_status())
+
+@app.route('/api/mp/host/start', methods=['POST'])
+def start_host():
+    data = request.json
+    port = int(data.get('port', 5000))
+    username = data.get('username', 'Host')
+    success, msg = net_man.start_host(port, username)
+    if success: return jsonify({"status": "started", "msg": msg})
+    return jsonify({"status": "error", "msg": msg}), 400
+
+@app.route('/api/mp/client/connect', methods=['POST'])
+def connect_client():
+    data = request.json
+    ip = data.get('ip', '127.0.0.1')
+    port = int(data.get('port', 5000))
+    username = data.get('username', 'Client')
+    success, msg = net_man.connect_to_host(ip, port, username)
+    if success: return jsonify({"status": "connecting", "msg": msg})
+    return jsonify({"status": "error", "msg": msg}), 400
+
+@app.route('/api/mp/stop', methods=['POST'])
+def stop_mp():
+    success, msg = net_man.stop()
+    return jsonify({"status": "stopped", "msg": msg})
+
+@app.route('/api/mp/share', methods=['POST'])
+def share_item():
+    """ Send item to network """
+    data = request.json
+    mtype = data.get('type') # share_route or share_poi
+    payload = data.get('data')
+    if not mtype or not payload: return jsonify({"error": "Invalid Data"}), 400
+    
+    success = net_man.send_share_item(mtype, payload)
+    return jsonify({"status": "sent" if success else "failed"})
+
+@app.route('/api/mp/temp_data', methods=['GET'])
+def get_temp_data():
+    """ Frontend polls this or receives 'mp_bulk_sync' """
+    return jsonify(net_man.temp_shared_data)
+
+@app.route('/api/mp/save_item', methods=['POST'])
+def save_shared_item():
+    """ Move item from temp variable to permanent storage """
+    data = request.json
+    cat = data.get('category') # routes / pois
+    item = data.get('item')
+    
+    if cat == 'routes':
+        db = load_json_file(ROUTES_FILE, {})
+        # Use item name or original ID as key
+        name = item.get('name', 'Shared Route')
+        # Check collision, append copy if needed? For now overwrite or unique
+        if name in db: name = f"{name}_(Shared)"
+        db[name] = item
+        save_json_file(ROUTES_FILE, db)
+        socketio.emit('routes_library_update', db)
+        
+    elif cat == 'pois':
+        db = load_json_file(POIS_FILE, [])
+        # Append
+        # Check if ID exists?
+        exists = any(x for x in db if x.get('id') == item.get('id') and x.get('id'))
+        if not exists:
+            db.append(item)
+            save_json_file(POIS_FILE, db)
+            socketio.emit('pois_update', db)
+            
+    return jsonify({"status": "saved", "name": item.get('name')})
+
+
 @app.route('/api/clickable_points', methods=['GET'])
 def get_clickable_points(): return jsonify(load_json_file(CLICKABLE_FILE, []))
 

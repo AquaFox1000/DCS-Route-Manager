@@ -5,6 +5,7 @@ import requests
 import webbrowser
 import threading
 import time
+import socket
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QSlider, QComboBox, 
@@ -565,9 +566,9 @@ class HUDTab(QWidget):
 
         btn_qr = QPushButton("📱")
         btn_qr.setToolTip("Mobile Hand-off (QR Code)")
-        btn_qr.setFixedSize(40, 40)
+        btn_qr.setFixedWidth(50)
         btn_qr.clicked.connect(self.show_qr_code)
-        btn_qr.setStyleSheet("background-color: #2b3a41; border: 1px solid #78aabc; font-size: 18px;")
+        btn_qr.setStyleSheet("height: 40px; font-size: 18px;")
         map_row.addWidget(btn_qr)
         
         layout.addLayout(map_row)
@@ -882,7 +883,236 @@ class ClickableTab(QWidget):
         self.p_win.browser.page().runJavaScript(f"socket.emit('delete_clickable_point', {{'id': {pid}}})")
         self.right_panel.setEnabled(False)
         self.edit_name.clear()
+
+# --- MULTIPLAYER TAB ---
+class MultiplayerTab(QWidget):
+    def __init__(self, parent_win, config):
+        super().__init__()
+        self.parent_win = parent_win
+        self.config = config
+        self.setup_ui()
         
+        # Timer for polling status
+        self.mp_mode = "IDLE"
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.poll_status)
+        self.timer.start(2000) # Poll every 2s
+
+    def get_lan_ip(self):
+        try:
+            # Method 1: Connect to public DNS (Best for finding default route)
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(0.1)
+            s.connect(('8.8.8.8', 80))
+            ip = s.getsockname()[0]
+            s.close()
+            if not ip.startswith('127.'): return ip
+        except: pass
+
+        try:
+            # Method 2: Connect to common router IP (Heuristic)
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(0.1)
+            s.connect(('192.168.1.1', 80))
+            ip = s.getsockname()[0]
+            s.close()
+            if not ip.startswith('127.'): return ip
+        except: pass
+
+        try:
+            # Method 3: Hostname resolution (can be loopback)
+            hostname = socket.gethostname()
+            _, _, ip_list = socket.gethostbyname_ex(hostname)
+            for ip in ip_list:
+                if not ip.startswith('127.') and not ip.startswith('169.254'):
+                    return ip
+        except: pass
+        
+        return "127.0.0.1"
+
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+
+        # Host Section
+        grp_host = QGroupBox("HOST A SESSION")
+        host_layout = QGridLayout()
+        host_layout.addWidget(QLabel("Port:"), 0, 0)
+        self.spin_host_port = QSpinBox(); self.spin_host_port.setRange(1024, 65535)
+        self.spin_host_port.setValue(self.config.get("mp_host_port", 5001))
+        host_layout.addWidget(self.spin_host_port, 0, 1)
+        
+        host_layout.addWidget(QLabel("Username:"), 1, 0)
+        self.edt_host_user = QLineEdit(self.config.get("mp_username", "HostAlpha"))
+        host_layout.addWidget(self.edt_host_user, 1, 1)
+        
+        self.btn_host_start = QPushButton("Start Hosting")
+        self.btn_host_start.clicked.connect(self.on_host_click)
+        self.btn_host_start.setStyleSheet("background-color: #2b4a3b; color: #8fbc8f;")
+        host_layout.addWidget(self.btn_host_start, 2, 0, 1, 2)
+        
+        # Display Local IP for Sharing
+        local_ip = self.get_lan_ip()
+        self.lbl_local_ip = QLabel(f"Host IP: {local_ip}")
+        self.lbl_local_ip.setStyleSheet("color: #3498db; font-weight: bold; margin-top: 5px;")
+        self.lbl_local_ip.setAlignment(Qt.AlignCenter)
+        host_layout.addWidget(self.lbl_local_ip, 3, 0, 1, 2)
+
+        grp_host.setLayout(host_layout)
+        layout.addWidget(grp_host)
+
+        # Client Section
+        grp_client = QGroupBox("CONNECT TO HOST")
+        client_layout = QGridLayout()
+        client_layout.addWidget(QLabel("Host IP:"), 0, 0)
+        self.edt_client_ip = QLineEdit(self.config.get("mp_target_ip", "127.0.0.1"))
+        client_layout.addWidget(self.edt_client_ip, 0, 1)
+
+        client_layout.addWidget(QLabel("Port:"), 1, 0)
+        self.spin_client_port = QSpinBox(); self.spin_client_port.setRange(1024, 65535)
+        self.spin_client_port.setValue(self.config.get("mp_target_port", 5001))
+        client_layout.addWidget(self.spin_client_port, 1, 1)
+
+        client_layout.addWidget(QLabel("Username:"), 2, 0)
+        self.edt_client_user = QLineEdit(self.config.get("mp_username", "Pilot1"))
+        client_layout.addWidget(self.edt_client_user, 2, 1)
+
+        self.btn_connect = QPushButton("Connect")
+        self.btn_connect.clicked.connect(self.on_connect_click)
+        self.btn_connect.setStyleSheet("background-color: #2b3a41; color: #78aabc;")
+        client_layout.addWidget(self.btn_connect, 3, 0, 1, 2)
+        grp_client.setLayout(client_layout)
+        layout.addWidget(grp_client)
+
+        # Status
+        self.lbl_status = QLabel("STATUS: IDLE")
+        self.lbl_status.setAlignment(Qt.AlignCenter)
+        self.lbl_status.setStyleSheet("color: #777; font-weight: bold; font-size: 14px; border: 1px solid #444; padding: 10px; background: #111;")
+        layout.addWidget(self.lbl_status)
+        
+        self.lbl_connected_clients = QLabel("Connected Pilots:")
+        self.lbl_connected_clients.setVisible(False)
+        layout.addWidget(self.lbl_connected_clients)
+        
+        self.list_users = QListWidget()
+        self.list_users.setStyleSheet("background: #0f1518; border: 1px solid #444; max-height: 100px;")
+        self.list_users.setVisible(False)
+        layout.addWidget(self.list_users)
+
+        self.list_users.setVisible(False)
+        layout.addWidget(self.list_users)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def on_host_click(self):
+        if self.mp_mode == "HOST": self.stop_mp()
+        else: self.start_host()
+
+    def on_connect_click(self):
+        if self.mp_mode == "CLIENT": self.stop_mp()
+        else: self.connect_client()
+
+    def start_host(self):
+        port = self.spin_host_port.value()
+        user = self.edt_host_user.text()
+        self.save_mp_config(host_port=port, username=user)
+        
+        payload = {"port": port, "username": user}
+        try:
+            requests.post(f"{SERVER_URL}/api/mp/host/start", json=payload, timeout=2)
+            self.poll_status()
+        except: pass
+
+    def connect_client(self):
+        ip = self.edt_client_ip.text()
+        port = self.spin_client_port.value()
+        user = self.edt_client_user.text()
+        self.save_mp_config(target_ip=ip, target_port=port, username=user)
+        
+        payload = {
+            "ip": ip, 
+            "port": port, 
+            "username": user
+        }
+        try:
+            requests.post(f"{SERVER_URL}/api/mp/client/connect", json=payload, timeout=2)
+            self.poll_status()
+        except: pass
+        
+    def save_mp_config(self, host_port=None, target_ip=None, target_port=None, username=None):
+        if host_port: self.config["mp_host_port"] = host_port
+        if target_ip: self.config["mp_target_ip"] = target_ip
+        if target_port: self.config["mp_target_port"] = target_port
+        if username: self.config["mp_username"] = username
+        self.parent_win.config_handler.save(self.config)
+
+    def stop_mp(self):
+        try: requests.post(f"{SERVER_URL}/api/mp/stop", timeout=2)
+        except: pass
+        self.poll_status()
+
+    def poll_status(self):
+        try:
+            r = requests.get(f"{SERVER_URL}/api/mp/status", timeout=1)
+            if r.status_code == 200:
+                data = r.json()
+                mode = data.get("mode", "IDLE")
+                users = data.get("users", 0)
+                self.mp_mode = mode # Update local state
+                
+                if mode == "HOST":
+                    self.lbl_status.setText(f"HOSTING ({users} Clients)")
+                    self.lbl_status.setStyleSheet("color: #00ff00; border: 1px solid #00ff00; background: #0a200a; font-weight: bold; padding: 10px;")
+                    
+                    self.btn_host_start.setText("Stop Hosting")
+                    self.btn_host_start.setStyleSheet("background-color: #5a2b2b; color: #e74c3c;")
+                    self.btn_host_start.setEnabled(True)
+                    self.btn_connect.setEnabled(False)
+                    self.btn_connect.setText("Connect")
+                    self.btn_connect.setStyleSheet("background-color: #2b3a41; color: #78aabc;")
+                    
+                    self.update_client_list(data.get("clients", []))
+                elif mode == "CLIENT":
+                    self.lbl_status.setText(f"CONNECTED to {data.get('ip')}")
+                    self.lbl_status.setStyleSheet("color: #00ffff; border: 1px solid #00ffff; background: #0a2020; font-weight: bold; padding: 10px;")
+                    
+                    self.btn_connect.setText("Disconnect")
+                    self.btn_connect.setStyleSheet("background-color: #5a2b2b; color: #e74c3c;")
+                    self.btn_connect.setEnabled(True)
+                    self.btn_host_start.setEnabled(False)
+                    self.btn_host_start.setText("Start Hosting")
+                    self.btn_host_start.setStyleSheet("background-color: #2b4a3b; color: #8fbc8f;")
+                    
+                    self.hide_client_list()
+                else:
+                    self.lbl_status.setText("STATUS: IDLE")
+                    self.lbl_status.setStyleSheet("color: #777; border: 1px solid #444; background: #111; font-weight: bold; padding: 10px;")
+                    
+                    self.btn_host_start.setText("Start Hosting")
+                    self.btn_host_start.setStyleSheet("background-color: #2b4a3b; color: #8fbc8f;")
+                    self.btn_host_start.setEnabled(True)
+                    
+                    self.btn_connect.setText("Connect")
+                    self.btn_connect.setStyleSheet("background-color: #2b3a41; color: #78aabc;")
+                    self.btn_connect.setEnabled(True)
+                    
+                    self.hide_client_list()
+        except: 
+            self.lbl_status.setText("OFFLINE")
+            self.lbl_status.setStyleSheet("color: #RED;")
+            
+    def update_client_list(self, clients):
+        self.lbl_connected_clients.setVisible(True)
+        self.list_users.setVisible(True)
+        self.list_users.clear()
+        for c in clients:
+            self.list_users.addItem(c)
+            
+    def hide_client_list(self):
+        self.lbl_connected_clients.setVisible(False)
+        self.list_users.setVisible(False)
+
 class SettingsWindow(QWidget):
     def __init__(self, overlay_ref, config, config_handler, input_mgr):
         super().__init__()
@@ -898,7 +1128,7 @@ class SettingsWindow(QWidget):
         self.geo_timer.setInterval(200)
         self.geo_timer.timeout.connect(self.push_settings)
 
-        self.setWindowTitle("HUD Settings")
+        self.setWindowTitle("Settings")
         self.setGeometry(100, 100, 550, 750)
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setStyleSheet(STYLES)
@@ -906,6 +1136,9 @@ class SettingsWindow(QWidget):
         self.tabs = QTabWidget()
         self.setLayout(QVBoxLayout())
         self.layout().addWidget(self.tabs)
+
+        self.tab_multiplayer = MultiplayerTab(self, self.config)
+        self.tabs.addTab(self.tab_multiplayer, "Connection")
 
         self.tab_hud = HUDTab(self)
         self.tabs.addTab(self.tab_hud, "HUD Display")
@@ -1165,10 +1398,11 @@ class HUDOverlay(QMainWindow):
                  data['mode'] = 'pct'
 
         # Always emit pointer-related events (server manages active state)
+        safe_emit = f"if (typeof socket !== 'undefined') socket.emit('{event}', {json.dumps(data)})"
         if 'pointer' in event or event in ['toggle_pointer_mode', 'virtual_pointer_update', 'virtual_click']:
-            self.browser.page().runJavaScript(f"socket.emit('{event}', {json.dumps(data)})")
+            self.browser.page().runJavaScript(safe_emit)
         elif self.pointer_active:
-            self.browser.page().runJavaScript(f"socket.emit('{event}', {json.dumps(data)})")
+            self.browser.page().runJavaScript(safe_emit)
 
     def toggle_pointer(self):
         self.pointer_active = not self.pointer_active
@@ -1246,7 +1480,6 @@ class HUDOverlay(QMainWindow):
                         keyboard.on_release_key(key_val, lambda e, n=action_name: self.bridge.trigger_test_hold.emit(n, False))
                     except: pass
             
-            print("✅ Input binds refreshed (including pointer_toggle).")
         except Exception as e: 
             print(f"Bind Error: {e}")
 

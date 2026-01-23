@@ -2,8 +2,6 @@
 // Refactored from map.html
 // Socket initialized in map.html
 
-
-
 // --- UTILITY FUNCTIONS ---
 
 function pad(val) {
@@ -58,7 +56,101 @@ let followMode = true; let headingUp = false;
 let planeMarker = null;
 let lastTelemetry = null;
 let myUnitId = null;
+
+// --- MULTIPLAYER GLOBALS ---
+let mpSettings = {
+    showShared: true,
+    autoSave: false,
+    shareAll: false,
+    coopAll: false,
+    sharedThreats: true,
+    sharedThreatOpacity: 0.2
+};
+let tempSharedData = { routes: {}, pois: [] }; // Storage for incoming shared data
+
+function toggleMpSetting(setting, chk) {
+    mpSettings[setting] = chk.checked;
+    socket.emit('update_mp_settings', { setting: setting, value: chk.checked });
+    if (setting === 'showShared') { renderMapRoutes(); renderPois(); }
+    updateMpUiState();
+    showToast(`MP: ${setting} ${chk.checked ? 'ON' : 'OFF'}`);
+}
+function updateMpUiState() {
+    const chkShareAll = document.getElementById('chk-mp-share-all');
+    const chkCoop = document.getElementById('chk-mp-coop');
+    const rowCoop = document.getElementById('row-mp-coop');
+    if (chkShareAll && chkCoop && rowCoop) {
+        chkCoop.disabled = !chkShareAll.checked;
+        rowCoop.style.opacity = chkShareAll.checked ? '1.0' : '0.5';
+    }
+    const chkShowShared = document.getElementById('chk-mp-show-shared');
+    const rowThreats = document.getElementById('row-mp-threats');
+    const chkThreats = document.getElementById('chk-mp-threats');
+    const rngThreats = document.getElementById('rng-mp-threat-opacity');
+    if (chkShowShared && rowThreats) {
+        const active = chkShowShared.checked;
+        if (chkThreats) chkThreats.disabled = !active;
+        if (rngThreats) rngThreats.disabled = !active;
+        rowThreats.style.opacity = active ? '1.0' : '0.5';
+    }
+}
+function updateMpThreatOpacity(val) {
+    mpSettings.sharedThreatOpacity = parseFloat(val) / 100.0;
+    // socket.emit? Maybe distinct event or generic update
+    // socket.emit('update_mp_settings', { setting: 'sharedThreatOpacity', value: mpSettings.sharedThreatOpacity });
+    renderTheaterThreats();
+}
+
+function toggleShareRoute(name) {
+    // Simple trigger for now
+    socket.emit('toggle_share_route', { id: name, state: true });
+}
+function toggleSharePoi(index) {
+    socket.emit('toggle_share_poi', { id: index, state: true });
+}
+function toggleShareMission(name) {
+    socket.emit('toggle_share_mission', { id: name, state: true });
+}
+function toggleCoopMission(name) {
+    socket.emit('toggle_coop_mission', { id: name, state: true });
+}
+function toggleCoopPoi(index) {
+    socket.emit('toggle_coop_poi', { id: index, state: true });
+}
+function generateListIcon(poi) {
+    if (!poi.sidc || poi.sidc === 'PIN') {
+        return `<div style="width:12px; height:12px; background:${poi.color || '#ffff00'}; border-radius:50%; border:1px solid #000; box-shadow: 0 0 4px #000;"></div>`;
+    } else {
+        try {
+            if (typeof ms !== 'undefined') {
+                const symb = new ms.Symbol(poi.sidc, { size: 16, colorMode: "Light" });
+                return `<img src="${symb.asCanvas().toDataURL()}" style="width:24px; height:24px; vertical-align:middle;">`;
+            }
+        } catch (e) { }
+        return `<div style="width:12px; height:12px; background:${poi.color || '#ffff00'}; border-radius:50%; border:1px solid #000;"></div>`;
+    }
+}
+let visuallySelectedRoute = null;
+
+function calculateTotalDistance(pts) {
+    let totalMeters = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+        const p1 = L.latLng(pts[i].lat, pts[i].lon);
+        const p2 = L.latLng(pts[i + 1].lat, pts[i + 1].lon);
+        totalMeters += p1.distanceTo(p2);
+    }
+    if (settings.distUnit === 'nm') {
+        return (totalMeters * 0.000539957).toFixed(1) + " nm";
+    } else {
+        return (totalMeters / 1000).toFixed(1) + " km";
+    }
+}
+
+
+
+// function showPoiCoords(btn, coords) { ... } // Removed
 let theaterUnits = {};
+let visibleCoordIndices = new Set();
 let tacticalUnits = {};
 let phonebook = {}; // Unit ID → Player Name mapping
 let pendingImportData = null;
@@ -1595,6 +1687,8 @@ async function loadMapSettings() {
         if (data.vis.grid && typeof updateGrid === 'function') updateGrid();
         if (data.vis.mgrs && typeof updateMgrsGrid === 'function') updateMgrsGrid();
 
+        updateMpUiState();
+
     } catch (e) {
         console.error("loadMapSettings Failed:", e);
         console.error("Stack trace:", e.stack);
@@ -1732,7 +1826,7 @@ function renderMissionList() {
     const missionKeys = Object.keys(missions); if (missionKeys.length === 0) { list.innerHTML = `<div style="padding:10px; color:#555; text-align:center;">No Missions Created</div>`; return; }
     missionKeys.forEach(key => {
         const data = missions[key]; const div = document.createElement('div'); div.className = 'saved-route-item draggable-mission'; div.draggable = true; div.dataset.missionName = key; div.style.display = 'flex'; div.style.alignItems = 'center'; div.style.padding = '5px'; div.style.gap = '10px'; div.onclick = () => selectMission(key);
-        div.innerHTML = `<div class="drag-handle" style="color:#555; padding:0 5px;"><i class="fa-solid fa-grip-vertical"></i></div><div style="flex-grow:1;"><div style="font-weight:bold; color:#d1e3ea; font-size:13px;">${key}</div><div style="font-size:10px; color:#888;">${Object.keys(data.routes || {}).length} Routes | ${(data.pois || []).length} POIs</div></div><div style="margin-right:5px;" onmousedown="event.stopPropagation()" onclick="event.stopPropagation()"><select class="map-selector" onchange="updateMissionMap('${key}', this.value)" style="width:80px; padding:2px; font-size:10px; background:#111; color:#aaa; border:1px solid #444; cursor:pointer;"><option value="None" ${!data.map ? 'selected' : ''}>-- Map --</option>${dcsMaps.map(m => `<option value="${m}" ${data.map === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div><button class="list-btn delete" onmousedown="event.stopPropagation()" onclick="event.stopPropagation(); deleteMission('${key}')"><i class="fa-solid fa-trash"></i></button>`;
+        div.innerHTML = `<div class="drag-handle" style="color:#555; padding:0 5px;"><i class="fa-solid fa-grip-vertical"></i></div><div style="flex-grow:1;"><div style="font-weight:bold; color:#d1e3ea; font-size:13px;">${key}</div><div style="font-size:10px; color:#888;">${Object.keys(data.routes || {}).length} Routes | ${(data.pois || []).length} POIs</div></div><div style="margin-right:5px;" onmousedown="event.stopPropagation()" onclick="event.stopPropagation()"><select class="map-selector" onchange="updateMissionMap('${key}', this.value)" style="width:80px; padding:2px; font-size:10px; background:#111; color:#aaa; border:1px solid #444; cursor:pointer;"><option value="None" ${!data.map ? 'selected' : ''}>-- Map --</option>${dcsMaps.map(m => `<option value="${m}" ${data.map === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div><button class="list-btn" style="width:30px;" onclick="event.stopPropagation(); toggleShareMission('${key}')" title="Share Mission"><i class="fa-solid fa-share-nodes"></i></button><button class="list-btn" style="width:30px;" onclick="event.stopPropagation(); toggleCoopMission('${key}')" title="Co-op Mode"><i class="fa-solid fa-users"></i></button><button class="list-btn delete" onmousedown="event.stopPropagation()" onclick="event.stopPropagation(); deleteMission('${key}')"><i class="fa-solid fa-trash"></i></button>`;
         div.addEventListener('dragstart', handleMissionDragStart); div.addEventListener('dragend', handleMissionDragEnd); list.appendChild(div);
     });
 }
@@ -1762,7 +1856,7 @@ function renderBrowserList() {
     const poiCount = allPois.length; const isPoiActive = (activeRouteName === "Visual Targets"); const isPoiVisible = map.hasLayer(poiLayer);
     const poiDiv = document.createElement('div'); poiDiv.className = `saved-route-item ${isPoiActive ? 'is-active' : ''}`; poiDiv.style.borderLeftColor = "#f1c40f"; poiDiv.style.display = 'flex'; poiDiv.style.alignItems = 'center'; poiDiv.style.padding = '5px'; poiDiv.style.gap = '0px'; poiDiv.draggable = true; poiDiv.dataset.routeName = "Visual Targets";
     poiDiv.addEventListener('dragstart', handleDragStart); poiDiv.addEventListener('dragend', handleDragEnd);
-    poiDiv.innerHTML = `<button id="btn-vis-poi-list" class="list-btn ${isPoiVisible ? 'active' : ''}" style="width:30px; margin-right:5px;" onclick="event.stopPropagation(); toggleLayer(poiLayer, null); saveMapSettings();" title="Toggle POI Visibility"><i class="fa-solid fa-eye"></i></button><div style="flex-grow:1; width:0; display:flex; align-items:center; justify-content:space-between; padding:0 5px; pointer-events:none;"><span style="font-weight:bold; font-size:13px; color:#d1e3ea; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Visual Targets</span><span style="font-size:10px; color:#aaa; background:rgba(255,255,255,0.1); padding:2px 6px; border-radius:4px; white-space:nowrap;">${poiCount} POI</span></div><button class="list-btn ${isPoiActive ? 'active' : ''}" style="width:30px;" onclick="event.stopPropagation(); activateVisualRoute()" title="Navigate Visual Targets"><i class="fa-solid fa-crosshairs"></i></button><button class="list-btn" style="width:30px;" onclick="event.stopPropagation(); toggleDrawer('poi')" title="Open Target List"><i class="fa-solid fa-list-ul"></i></button>`;
+    poiDiv.innerHTML = `<button id="btn-vis-poi-list" class="list-btn ${isPoiVisible ? 'active' : ''}" style="width:30px; margin-right:5px;" onclick="event.stopPropagation(); toggleLayer(poiLayer, null); saveMapSettings();" title="Toggle POI Visibility"><i class="fa-solid fa-eye"></i></button><div style="flex-grow:1; width:0; display:flex; align-items:center; justify-content:space-between; padding:0 5px; pointer-events:none;"><span style="font-weight:bold; font-size:13px; color:#d1e3ea; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Visual Targets</span><span style="font-size:10px; color:#aaa; background:rgba(255,255,255,0.1); padding:2px 6px; border-radius:4px; white-space:nowrap;">${poiCount} POI</span></div><button class="list-btn" style="width:30px;" onclick="event.stopPropagation(); toggleShareAllPois()" title="Share All POIs"><i class="fa-solid fa-share-nodes"></i></button><button class="list-btn" style="width:30px;" onclick="event.stopPropagation(); toggleCoopAllPois()" title="Co-op All POIs"><i class="fa-solid fa-users"></i></button><button class="list-btn ${isPoiActive ? 'active' : ''}" style="width:30px;" onclick="event.stopPropagation(); activateVisualRoute()" title="Navigate Visual Targets"><i class="fa-solid fa-crosshairs"></i></button><button class="list-btn" style="width:30px;" onclick="event.stopPropagation(); toggleDrawer('poi')" title="Open Target List"><i class="fa-solid fa-list-ul"></i></button>`;
     list.appendChild(poiDiv);
 
     if (Object.keys(allSavedRoutes).length === 0) { if (poiCount === 0) { const empty = document.createElement('div'); empty.innerHTML = `<div style="text-align:center; padding:10px; color:#555; font-size:11px;">No Saved Routes</div>`; list.appendChild(empty); return; } }
@@ -1770,7 +1864,7 @@ function renderBrowserList() {
         const rColor = rData.color || "#78aabc"; const isActive = (name === activeRouteName); const isVisible = visibleRoutes.has(name) || isActive;
         const div = document.createElement('div'); div.className = `saved-route-item ${isActive ? 'is-active' : ''}`; div.draggable = true; div.dataset.routeName = name; div.style.display = 'flex'; div.style.alignItems = 'center'; div.style.padding = '5px'; div.style.gap = '0px';
         div.addEventListener('dragstart', handleDragStart); div.addEventListener('dragend', handleDragEnd); div.onclick = () => openEditor(name);
-        div.innerHTML = `<button class="list-btn ${isVisible ? 'active' : ''}" style="width:30px; margin-right:5px;" onclick="event.stopPropagation(); toggleRouteVis('${name}')"><i class="fa-solid fa-eye"></i></button><div style="flex-grow:1; width:0; display:flex; align-items:center; justify-content:space-between; padding:0 5px; pointer-events:none;"><span style="font-weight:bold; font-size:13px; color:#d1e3ea; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</span><input type="color" class="color-picker-mini" value="${rColor}" onclick="event.stopPropagation()" onchange="updateRouteColor('${name}', this.value)" style="pointer-events:auto;"></div><button class="list-btn ${isActive ? 'active' : ''}" style="width:30px;" onclick="event.stopPropagation(); activateRoute('${name}')"><i class="fa-solid fa-crosshairs"></i></button><button class="list-btn delete" style="width:30px;" onclick="event.stopPropagation(); deleteRoute('${name}')"><i class="fa-solid fa-trash"></i></button>`;
+        div.innerHTML = `<button class="list-btn ${isVisible ? 'active' : ''}" style="width:30px; margin-right:5px;" onclick="event.stopPropagation(); toggleRouteVis('${name}')"><i class="fa-solid fa-eye"></i></button><div style="flex-grow:1; width:0; display:flex; align-items:center; justify-content:space-between; padding:0 5px; pointer-events:none;"><span style="font-weight:bold; font-size:13px; color:#d1e3ea; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</span><input type="color" class="color-picker-mini" value="${rColor}" onclick="event.stopPropagation()" onchange="updateRouteColor('${name}', this.value)" style="pointer-events:auto;"></div><button class="list-btn" style="width:30px;" onclick="event.stopPropagation(); toggleShareRoute('${name}')" title="Share Network"><i class="fa-solid fa-share-nodes"></i></button><button class="list-btn" style="width:30px;" onclick="event.stopPropagation()" title="Co-op Edit"><i class="fa-solid fa-users"></i></button><button class="list-btn ${isActive ? 'active' : ''}" style="width:30px;" onclick="event.stopPropagation(); activateRoute('${name}')"><i class="fa-solid fa-crosshairs"></i></button><button class="list-btn delete" style="width:30px;" onclick="event.stopPropagation(); deleteRoute('${name}')"><i class="fa-solid fa-trash"></i></button>`;
         list.appendChild(div);
     });
 }
@@ -1781,26 +1875,161 @@ function handleRouteListDrop(e) { if (e.stopPropagation) e.stopPropagation(); co
 function openEditor(name) { editingRouteName = name; const rawData = allSavedRoutes[name].points || allSavedRoutes[name]; editingRouteData = JSON.parse(JSON.stringify(rawData)); document.getElementById('save-name').value = name; document.getElementById('save-color').value = allSavedRoutes[name].color || "#78aabc"; document.getElementById('route-title').innerText = "Edit: " + name; let maxWp = 0; editingRouteData.forEach(p => { if (p.name && p.name.startsWith('WP ')) { let num = parseInt(p.name.split(' ')[1]); if (num > maxWp) maxWp = num; } }); wpCounter = maxWp + 1; if (visibleRoutes.has(name)) { visibleRoutes.delete(name); renderMapRoutes(); } switchToEditor(); renderEditorPoints(); renderEditorMap(); }
 function showBrowser() { document.getElementById('view-browser').style.display = 'flex'; document.getElementById('view-editor').style.display = 'none'; document.getElementById('manual-form').style.display = 'none'; setClickMode('none'); activeEditIndex = -1; editorLayer.clearLayers(); if (editingRouteName && allSavedRoutes[editingRouteName]) visibleRoutes.add(editingRouteName); renderBrowserList(); renderMapRoutes(); }
 
+function showRouteInfoPopup(e, routeName, pts, isShared, origin) {
+    L.DomEvent.stopPropagation(e);
+    visuallySelectedRoute = routeName;
+    renderMapRoutes(); // Re-render to show labels
+
+    const totalDist = calculateTotalDistance(pts);
+    let content = `<div style="min-width:150px;">
+        <div style="font-weight:bold; font-size:14px; border-bottom:1px solid #ccc; margin-bottom:5px;">${routeName}</div>
+        <div style="font-size:12px;">Distance: <b>${totalDist}</b></div>`;
+
+    if (isShared && origin) {
+        content += `<div style="font-size:12px; color:#2980b9;">Source: <b>${origin}</b></div>`;
+    }
+    if (isShared) {
+        content += `<button onclick="saveSharedItemToLibrary('routes', tempSharedData.routes['${routeName}'] || tempSharedData.routes['${pts.id}'])\" style="margin-top:8px; width:100%; background:#27ae60; color:white; border:none; padding:4px; border-radius:3px; cursor:pointer;">Save to Library</button>`;
+    }
+    content += `</div>`;
+
+    const popup = L.popup({ offset: [0, -5] })
+        .setLatLng(e.latlng)
+        .setContent(content)
+        .openOn(map);
+
+    popup.on('remove', () => {
+        if (visuallySelectedRoute === routeName) {
+            visuallySelectedRoute = null;
+            renderMapRoutes();
+        }
+    });
+}
+
+// --- RENDER UPDATES ---
 function renderMapRoutes() {
     routeLayer.clearLayers(); activeLegLayer.clearLayers();
+
+    // 1. Render Local Routes
     for (const [name, rData] of Object.entries(allSavedRoutes)) {
-        const isActive = (name === activeRouteName); if (!visibleRoutes.has(name) && !isActive) continue; const pts = rData.points || rData; const color = rData.color || "#78aabc"; if (!pts || pts.length === 0) continue;
-        if (isActive) {
-            pts.forEach((pt, i) => {
-                const isTgt = pt.type === 'tgt'; const isNext = (i === activeWpIndex); const htmlColor = isNext ? '#fff' : color;
-                const iconHtml = isTgt ? `<div style="color:${htmlColor}; font-size:20px; filter:drop-shadow(0 0 3px black);">🎯</div>` : `<div style="color:${htmlColor}; font-size:20px; filter:drop-shadow(0 0 3px black);"><i class="fa-solid fa-location-dot"></i></div>`;
-                const icon = L.divIcon({ className: 'rt-icon', html: iconHtml, iconSize: [20, 20], iconAnchor: [10, 20] });
-                const m = L.marker([pt.lat, pt.lon], { icon: icon }).addTo(routeLayer);
-                m.on('click', () => { const coordStr = formatCoordDisplay(pt.lat, pt.lon); const displayAlt = toDisplayAlt(pt.alt); const detailHtml = `<div style="font-weight:bold; color:#333; margin-bottom:4px;">${pt.name}</div><div style="font-size:11px; color:#555;">${displayAlt} ${pt.altType || settings.altUnit}</div><div style="font-family:monospace; margin-top:5px; font-size:10px; color:#000;">${coordStr.replace('\n', '<br>')}</div>`; L.popup().setLatLng([pt.lat, pt.lon]).setContent(detailHtml).openOn(map); });
-                const labelAlt = toDisplayAlt(pt.alt); if (showWpLabels) m.bindTooltip(`${pt.name} | ${labelAlt}`, { permanent: true, direction: 'right', className: 'airport-label' }); else m.bindTooltip(pt.name, { permanent: false, direction: 'top' });
-            });
-            if (activeWpIndex > 0) { const pastPts = pts.slice(0, activeWpIndex + 1).map(p => [p.lat, p.lon]); if (pastPts.length > 1) L.polyline(pastPts, { color: '#555', weight: 2 }).addTo(routeLayer); }
-            if (activeWpIndex >= 0 && activeWpIndex < pts.length) { const futurePts = pts.slice(activeWpIndex).map(p => [p.lat, p.lon]); if (futurePts.length > 1) L.polyline(futurePts, { color: color, weight: 3, dashArray: '10, 10' }).addTo(routeLayer); }
-            if (activeWpIndex > 0 && activeWpIndex < pts.length) { const prev = pts[activeWpIndex - 1]; const curr = pts[activeWpIndex]; L.polyline([[prev.lat, prev.lon], [curr.lat, curr.lon]], { color: '#0f0', weight: 4, opacity: 0.3 }).addTo(routeLayer); }
-        } else {
-            const latlngs = pts.map(p => [p.lat, p.lon]); L.polyline(latlngs, { color: color, weight: 2, dashArray: '3, 6', opacity: 0.8 }).addTo(routeLayer);
-            pts.forEach(pt => { const cm = L.circleMarker([pt.lat, pt.lon], { radius: 3, color: color, fillOpacity: 1 }).addTo(routeLayer); if (showWpLabels) { cm.bindTooltip(`${pt.name}`, { permanent: true, direction: 'right', className: 'airport-label' }); } });
+        const isActive = (name === activeRouteName); if (!visibleRoutes.has(name) && !isActive) continue;
+        const pts = rData.points || rData;
+        const color = rData.color || "#78aabc";
+        if (!pts || pts.length === 0) continue;
+
+        renderRoutePolyline(pts, color, isActive, false, name); // isShared=false
+    }
+
+    // 2. Render Shared Routes (if enabled)
+    if (mpSettings.showShared) {
+        for (const [key, rData] of Object.entries(tempSharedData.routes)) {
+            // Shared routes typically assume View Only unless Coop
+            // Use distint style? 
+            const pts = rData.points || rData;
+            const color = "#a6e3e9"; // Cyan-ish for shared?
+            renderRoutePolyline(pts, color, false, true, rData.name, rData._origin);
         }
+    }
+}
+
+function renderRoutePolyline(pts, color, isActive, isShared, routeName, origin) {
+    // Shared Logic: Dashed line + Badge?
+    const dashArray = isShared ? '2, 8' : (isActive ? null : '3, 6');
+    const weight = isShared ? 2 : (isActive ? 3 : 2);
+
+    // Check if this route is visually selected (clicked)
+    const isSelected = (visuallySelectedRoute === routeName);
+    const forceLabels = showWpLabels || isSelected;
+
+    if (isActive && !isShared) {
+        // Active Route Rendering (Complex)
+        // DRAW WAYPOINTS
+        pts.forEach((pt, i) => {
+            const isTgt = pt.type === 'tgt';
+            const isNext = (i === activeWpIndex);
+            const htmlColor = isNext ? '#fff' : color;
+            const iconHtml = isTgt ? `<div style="color:${htmlColor}; font-size:20px; filter:drop-shadow(0 0 3px black);">🎯</div>` : `<div style="color:${htmlColor}; font-size:20px; filter:drop-shadow(0 0 3px black);"><i class="fa-solid fa-location-dot"></i></div>`;
+            const icon = L.divIcon({ className: 'rt-icon', html: iconHtml, iconSize: [20, 20], iconAnchor: [10, 20] });
+            const m = L.marker([pt.lat, pt.lon], { icon: icon }).addTo(routeLayer);
+
+            // Tooltip
+            const labelAlt = toDisplayAlt(pt.alt);
+            let tooltipText = `${pt.name} | ${labelAlt}`;
+            if (isShared) tooltipText += ` [${origin}]`;
+
+            if (forceLabels) m.bindTooltip(tooltipText, { permanent: true, direction: 'right', className: 'airport-label' });
+            else m.bindTooltip(pt.name, { permanent: false, direction: 'top' });
+
+            // Popup
+            m.on('click', () => {
+                let actionHtml = "";
+                if (isShared) {
+                    actionHtml = `<button onclick="saveSharedItemToLibrary('routes', tempSharedData.routes['${routeName}'] || tempSharedData.routes['${pts.id}'])\" style="margin-top:5px; width:100%; background:#27ae60; color:white; border:none; padding:4px;">Save to Library</button>`;
+                }
+                const detailHtml = `<div style="font-weight:bold; color:#333; margin-bottom:4px;">${pt.name}</div><div style="font-size:11px; color:#555;">${toDisplayAlt(pt.alt)} ${pt.altType || settings.altUnit}</div>${actionHtml}`;
+                L.popup().setLatLng([pt.lat, pt.lon]).setContent(detailHtml).openOn(map);
+            });
+        });
+
+        // DRAW LINES
+        if (activeWpIndex > 0) { const pastPts = pts.slice(0, activeWpIndex + 1).map(p => [p.lat, p.lon]); if (pastPts.length > 1) L.polyline(pastPts, { color: '#555', weight: 2 }).addTo(routeLayer); }
+        if (activeWpIndex >= 0 && activeWpIndex < pts.length) { const futurePts = pts.slice(activeWpIndex).map(p => [p.lat, p.lon]); if (futurePts.length > 1) L.polyline(futurePts, { color: color, weight: 3, dashArray: '10, 10' }).addTo(routeLayer); }
+        if (activeWpIndex > 0 && activeWpIndex < pts.length) { const prev = pts[activeWpIndex - 1]; const curr = pts[activeWpIndex]; L.polyline([[prev.lat, prev.lon], [curr.lat, curr.lon]], { color: '#0f0', weight: 4, opacity: 0.3 }).addTo(routeLayer); }
+
+    } else {
+        // Inactive or Shared
+        const latlngs = pts.map(p => [p.lat, p.lon]);
+        const poly = L.polyline(latlngs, { color: color, weight: weight, dashArray: dashArray, opacity: 0.8 }).addTo(routeLayer);
+
+        // Click Handler for Cloud/Popup & Selection
+        poly.on('click', (e) => {
+            L.DomEvent.stopPropagation(e); // Prevent map click
+            visuallySelectedRoute = routeName;
+            renderMapRoutes(); // Re-render to show labels
+
+            const totalDist = calculateTotalDistance(pts);
+            let content = `<div style="min-width:150px;">
+                <div style="font-weight:bold; font-size:14px; border-bottom:1px solid #ccc; margin-bottom:5px;">${routeName}</div>
+                <div style="font-size:12px;">Distance: <b>${totalDist}</b></div>`;
+
+            if (isShared && origin) {
+                content += `<div style="font-size:12px; color:#2980b9;">Source: <b>${origin}</b></div>`;
+            }
+            if (isShared) {
+                content += `<button onclick="saveSharedItemToLibrary('routes', tempSharedData.routes['${routeName}'])" style="margin-top:8px; width:100%; background:#27ae60; color:white; border:none; padding:4px; border-radius:3px; cursor:pointer;">Save to Library</button>`;
+            }
+            content += `</div>`;
+
+            const popup = L.popup({ offset: [0, -5] })
+                .setLatLng(e.latlng)
+                .setContent(content)
+                .openOn(map);
+
+            // Clear selection when popup closes
+            popup.on('remove', () => {
+                if (visuallySelectedRoute === routeName) {
+                    visuallySelectedRoute = null;
+                    renderMapRoutes();
+                }
+            });
+        });
+
+        pts.forEach(pt => {
+            const cm = L.circleMarker([pt.lat, pt.lon], { radius: 3, color: color, fillOpacity: 1 }).addTo(routeLayer);
+
+            let lbl = pt.name;
+            if (isShared && origin) lbl += ` (${origin})`;
+
+            // Standard Hover or Permanent if Forced
+            if (forceLabels) {
+                cm.bindTooltip(lbl, { permanent: true, direction: 'right', className: 'airport-label' });
+            } else {
+                cm.bindTooltip(lbl, { permanent: false, direction: 'top', className: 'airport-label' });
+            }
+
+            // Clicking Marker triggers SAME logic as Route Click
+            cm.on('click', (e) => showRouteInfoPopup(e, routeName, pts, isShared, origin));
+        });
     }
 }
 function renderEditorPoints() {
@@ -1920,29 +2149,67 @@ function markCurrentPosition() { if (lastTelemetry && lastTelemetry.lat) createP
 async function openPoiModal(index) {
     activePoiIndex = index; const poi = allPois[index];
     document.getElementById('poi-name').value = poi.name; document.getElementById('poi-color').value = poi.color || '#ffff00';
-    document.getElementById('chk-poi-threat-detect').checked = (poi.threatDetectEnabled !== undefined) ? poi.threatDetectEnabled : false; document.getElementById('chk-poi-threat-deadly').checked = (poi.threatDeadlyEnabled !== undefined) ? poi.threatDeadlyEnabled : false; updatePoiThreatVisBtn(poi.threatVisible !== false);
-    let currentCode = poi.sidc || "PIN"; let affil = 'F'; if (currentCode.length > 10) affil = currentCode.charAt(1); document.getElementById('poi-affil').value = affil; renderPoiSelector();
+
+    let currentCode = poi.sidc || "PIN"; let affil = 'H'; if (currentCode.length > 10) affil = currentCode.charAt(1); document.getElementById('poi-affil').value = affil; renderPoiSelector();
     let partialToMatch = (currentCode === 'PIN') ? 'PIN' : currentCode.substring(4, 11); document.querySelectorAll('.icon-opt').forEach(d => { d.classList.remove('selected'); d.style.background = ""; d.style.borderColor = ""; d.style.color = ""; });
     const targetBtn = document.querySelector(`.icon-opt[data-code="${partialToMatch}"]`); selectPoiIcon(partialToMatch, targetBtn, 0, 0);
-    const savedDetect = poi.threatDetect || lastThreatDetect || 0; const savedDeadly = poi.threatDeadly || lastThreatDeadly || 0; document.getElementById('poi-threat-detect').value = savedDetect; document.getElementById('poi-threat-deadly').value = savedDeadly;
+
+    // Restore Threat Values & Checks AFTER selectPoiIcon (which resets them to 0/False)
+    const savedDetect = poi.threatDetect || lastThreatDetect || 0; const savedDeadly = poi.threatDeadly || lastThreatDeadly || 0;
+    document.getElementById('poi-threat-detect').value = savedDetect; document.getElementById('poi-threat-deadly').value = savedDeadly;
+    document.getElementById('chk-poi-threat-detect').checked = (poi.threatDetectEnabled !== undefined) ? poi.threatDetectEnabled : true;
+    document.getElementById('chk-poi-threat-deadly').checked = (poi.threatDeadlyEnabled !== undefined) ? poi.threatDeadlyEnabled : true;
+
+    const globalThreats = document.getElementById('chk-vis-threats') ? document.getElementById('chk-vis-threats').checked : true;
+    const isVisible = (poi.threatVisible !== undefined) ? poi.threatVisible : globalThreats;
+    updatePoiThreatVisBtn(isVisible);
+
     const coordStr = formatCoordDisplay(poi.lat, poi.lon); document.getElementById('poi-info-coord').innerText = coordStr.replace('\n', ', '); const elBox = document.getElementById('poi-info-alt'); elBox.innerText = "Fetching...";
     const elevM = await getGroundElevation(poi.lat, poi.lon); let finalAlt = elevM; let unitStr = "m"; if (settings.altUnit === 'ft') { finalAlt = elevM * 3.28084; unitStr = "ft"; } elBox.innerText = `${Math.round(finalAlt)} ${unitStr}`;
-    document.getElementById('poi-btn-container').innerHTML = `<button class="btn-full" onclick="activatePoiFromModal(${index})" style="background:#18611c; color:#aaa;">Navigate To</button><button class="btn-full" onclick="savePoiEdit()" style="color:#aaa">Save</button><button class="btn-full" onclick="deletePoi()" style="background:#5c2121; color:#aaa;">Delete</button><button class="btn-full" onclick="closePoiModal()" style="background:#555; color:#aaa;">Cancel</button>`;
+    document.getElementById('poi-btn-container').innerHTML = `
+    <div style="display:flex; gap:5px; margin-bottom:5px; width:100%;">
+        <button class="btn-full" onclick="toggleSharePoi(${index})" style="background:#b26500ff; color:#aaa; width:45px; min-width:45px; padding:0; display:flex; align-items:center; justify-content:center;" title="Share"><i class="fa-solid fa-share-nodes"></i></button>
+        <button class="btn-full" onclick="toggleCoopPoi(${index})" style="background:#4568a4ff; color:#aaa; width:45px; min-width:45px; padding:0; display:flex; align-items:center; justify-content:center;" title="Co-op"><i class="fa-solid fa-users"></i></button>
+        <button class="btn-full" onclick="activatePoiFromModal(${index})" style="background:#18611c; color:#aaa; flex-grow:1;">Navigate To</button>
+    </div>
+    <button class="btn-full" onclick="savePoiEdit()" style="color:#aaa">Save</button>
+    <button class="btn-full" onclick="deletePoi()" style="background:#5c2121; color:#aaa;">Delete</button>
+    <button class="btn-full" onclick="closePoiModal()" style="background:#555; color:#aaa;">Cancel</button>`;
     document.getElementById('poi-modal').style.display = 'flex';
 }
 function activatePoiFromModal(index) { socket.emit('activate_poi_route', { index: index }); activeRouteName = "Visual Targets"; activeRouteData = JSON.parse(JSON.stringify(allPois)); activeRouteData.forEach((p, i) => { p.name = `T${i + 1}`; p.type = 'poi'; }); activeWpIndex = index; updateMiniPanel(); renderMapRoutes(); closePoiModal(); showToast(`Tracking T${index + 1}`); }
 function renderPoiList() {
     const list = document.getElementById('poi-list-container'); list.innerHTML = ""; if (allPois.length === 0) { list.innerHTML = `<div style="text-align:center; padding:20px; color:#555;">No Visual Targets</div>`; return; }
     allPois.forEach((poi, i) => {
-        const isActiveTarget = (activeRouteName === "Visual Targets" && activeWpIndex === i); const rawName = poi.name || "Mark"; const div = document.createElement('div'); div.className = `saved-route-item ${isActiveTarget ? 'is-active' : ''}`; div.setAttribute('draggable', 'true'); div.dataset.originId = i; div.style.display = 'flex'; div.style.alignItems = 'center'; div.style.padding = '5px'; div.style.gap = '0px';
+        const isActiveTarget = (activeRouteName === "Visual Targets" && activeWpIndex === i); const rawName = poi.name || "Mark";
+        const div = document.createElement('div'); div.className = `saved-route-item ${isActiveTarget ? 'is-active' : ''}`; div.setAttribute('draggable', 'true'); div.dataset.originId = i; div.style.display = 'flex'; div.style.alignItems = 'center'; div.style.padding = '5px'; div.style.gap = '0px';
         div.addEventListener('dragstart', () => div.classList.add('dragging')); div.addEventListener('dragend', () => { div.classList.remove('dragging'); finishPoiSort(); });
+        const isShowingCoords = visibleCoordIndices.has(i);
         const coordStr = formatCoordDisplay(poi.lat, poi.lon).replace(/\n/g, ' ');
-        div.innerHTML = `<div style="width:20px; min-width:20px; text-align:center; font-weight:bold; color:${isActiveTarget ? '#0f0' : '#78aabc'}; font-size:11px; pointer-events:none;">T${i + 1}</div><div style="flex-grow:1; width:0; display:flex; align-items:center; justify-content:space-between; padding:0 5px; pointer-events:none; overflow:hidden;"><span style="font-weight:bold; font-size:13px; color:#d1e3ea; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-right:5px;">${rawName}</span><span style="font-family:'Consolas', monospace; color:#aaa; font-size:11px; white-space:nowrap; flex-shrink:0;">${coordStr}</span></div><button class="list-btn" style="width:30px;" onclick="activatePoiFromModal(${i})" title="Set Active"><i class="fa-solid fa-crosshairs"></i></button><button class="list-btn delete" style="width:30px;" onclick="activePoiIndex=${i}; deletePoi();" title="Delete"><i class="fa-solid fa-trash"></i></button>`;
+        // If showing coords, render special layout: T# | Icon | Name | Coords | Toggle (Right aligned)
+        // Else render standard layout.
+        const iconHtml = generateListIcon(poi);
+
+        let innerHTML = '';
+        if (isShowingCoords) {
+            innerHTML = `<div style="width:20px; min-width:20px; text-align:center; font-weight:bold; color:${isActiveTarget ? '#0f0' : '#78aabc'}; font-size:11px; pointer-events:none;">T${i + 1}</div><div style="display:flex; align-items:center; justify-content:center; width:24px; pointer-events:none;">${iconHtml}</div><div style="flex-grow:1; width:0; display:flex; align-items:center; padding:0 5px; cursor:default; overflow:hidden;"><span style="font-weight:bold; font-size:13px; color:#d1e3ea; white-space:nowrap; margin-right:8px;">${rawName}</span><span style="font-family:monospace; color:#f1c40f; font-size:12px; white-space:nowrap;">${coordStr}</span></div><button class="list-btn" style="width:30px; margin-left:auto;" onclick="event.stopPropagation(); togglePoiCoordDisplay(${i})" title="Return to Normal View"><i class="fa-solid fa-map-location-dot" style="color:#f1c40f"></i></button>`;
+        } else {
+            innerHTML = `<div style="width:20px; min-width:20px; text-align:center; font-weight:bold; color:${isActiveTarget ? '#0f0' : '#78aabc'}; font-size:11px; pointer-events:none;">T${i + 1}</div><div style="display:flex; align-items:center; justify-content:center; width:24px; pointer-events:none;">${iconHtml}</div><div style="flex-grow:1; width:0; display:flex; align-items:center; justify-content:space-between; padding:0 5px; cursor:default; overflow:hidden;"><span style="font-weight:bold; font-size:13px; color:#d1e3ea; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-right:5px;">${rawName}</span></div><button class="list-btn" style="width:30px;" onclick="event.stopPropagation(); togglePoiCoordDisplay(${i})" title="Toggle Name/Coords"><i class="fa-solid fa-map-location-dot"></i></button><button class="list-btn" style="width:30px;" onclick="event.stopPropagation(); toggleSharePoi(${i})" title="Share Network"><i class="fa-solid fa-share-nodes"></i></button><button class="list-btn" style="width:30px;" onclick="event.stopPropagation(); toggleCoopPoi(${i})" title="Co-op Mode"><i class="fa-solid fa-users"></i></button><button class="list-btn" style="width:30px;" onclick="activatePoiFromModal(${i})" title="Set Active"><i class="fa-solid fa-crosshairs"></i></button><button class="list-btn delete" style="width:30px;" onclick="activePoiIndex=${i}; deletePoi();" title="Delete"><i class="fa-solid fa-trash"></i></button>`;
+        }
+        div.innerHTML = innerHTML;
         list.appendChild(div);
     });
 }
+function togglePoiCoordDisplay(index) {
+    if (visibleCoordIndices.has(index)) {
+        visibleCoordIndices.delete(index);
+    } else {
+        visibleCoordIndices.add(index);
+    }
+    renderPoiList(); // Re-render to update state correctly
+}
 const poiContainer = document.getElementById('poi-list-container'); poiContainer.addEventListener('dragover', e => { e.preventDefault(); const afterElement = getDragAfterElement(poiContainer, e.clientY, '.saved-route-item'); const draggable = document.querySelector('.dragging'); if (!draggable) return; if (afterElement == null) poiContainer.appendChild(draggable); else poiContainer.insertBefore(draggable, afterElement); });
-function finishPoiSort() { const listItems = document.querySelectorAll('#poi-list-container .saved-route-item'); const newPois = []; let newActiveIndex = -1; listItems.forEach((item, newIndex) => { const originalIndex = parseInt(item.dataset.originId); newPois.push(allPois[originalIndex]); if (activeWpIndex === originalIndex) newActiveIndex = newIndex; }); allPois = newPois; if (activeRouteName === "Visual Targets") { activeRouteData = JSON.parse(JSON.stringify(allPois)); activeRouteData.forEach((p, i) => { p.name = `T${i + 1}`; p.type = 'poi'; }); activeWpIndex = newActiveIndex; updateServerNav(); } saveActiveMission(); renderPoiList(); renderMapRoutes(); }
+function finishPoiSort() { visibleCoordIndices.clear(); const listItems = document.querySelectorAll('#poi-list-container .saved-route-item'); const newPois = []; let newActiveIndex = -1; listItems.forEach((item, newIndex) => { const originalIndex = parseInt(item.dataset.originId); newPois.push(allPois[originalIndex]); if (activeWpIndex === originalIndex) newActiveIndex = newIndex; }); allPois = newPois; if (activeRouteName === "Visual Targets") { activeRouteData = JSON.parse(JSON.stringify(allPois)); activeRouteData.forEach((p, i) => { p.name = `T${i + 1}`; p.type = 'poi'; }); activeWpIndex = newActiveIndex; updateServerNav(); } saveActiveMission(); renderPoiList(); renderMapRoutes(); }
 function savePoiEdit() {
     if (activePoiIndex === -1) return; const name = document.getElementById('poi-name').value; let finalSidc = 'PIN'; let color = document.getElementById('poi-color').value; const tDetect = parseFloat(document.getElementById('poi-threat-detect').value) || 0; const tDeadly = parseFloat(document.getElementById('poi-threat-deadly').value) || 0;
     allPois[activePoiIndex].threatDetect = tDetect; allPois[activePoiIndex].threatDeadly = tDeadly; allPois[activePoiIndex].threatDetectEnabled = document.getElementById('chk-poi-threat-detect').checked; allPois[activePoiIndex].threatDeadlyEnabled = document.getElementById('chk-poi-threat-deadly').checked;
@@ -3097,4 +3364,147 @@ window.addEventListener('DOMContentLoaded', async () => {
     await loadMapSettings();
     await loadSavedRoutes();
     await loadSavedPois();
+
+    // Initial MP Settings load?
+    if (localStorage.getItem('mp_settings')) {
+        try { mpSettings = JSON.parse(localStorage.getItem('mp_settings')); } catch (e) { }
+    }
+    updateMpSettingsUI();
+
+    // Poll for any existing shared data (in case of reconnect)
+    fetch('/api/mp/temp_data').then(r => r.json()).then(data => {
+        if (data.routes) tempSharedData.routes = data.routes; // Array? Backend said list in list, dict in python?
+        // Python temp_shared_data['routes'] is list.
+        // Let's normalize. Ideally we map ID->Data
+        if (Array.isArray(data.routes)) {
+            data.routes.forEach(r => { if (r.id) tempSharedData.routes[r.id] = r; });
+        }
+        if (Array.isArray(data.pois)) {
+            tempSharedData.pois = data.pois;
+        }
+        renderMapRoutes();
+        renderPois();
+    }).catch(console.error);
 });
+
+// --- MULTIPLAYER LOGIC ---
+
+// 1. MP Settings Drawer Logic
+function toggleMpSetting(key) {
+    mpSettings[key] = !mpSettings[key];
+    saveMpSettings();
+}
+
+function saveMpSettings() {
+    localStorage.setItem('mp_settings', JSON.stringify(mpSettings));
+    updateMpSettingsUI();
+    renderMapRoutes(); // Refresh visibility
+    renderPois();
+}
+
+function updateMpSettingsUI() {
+    // Update Toggles in Drawer (Assumes HTML existence)
+    const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = val; };
+    setChk('chk-mp-show-shared', mpSettings.showShared);
+    setChk('chk-mp-autosave', mpSettings.autoSave);
+    setChk('chk-mp-share-all', mpSettings.shareAll);
+    setChk('chk-mp-coop-mode', mpSettings.coopAll);
+}
+
+// 2. Socket Events
+socket.on('mp_status', (data) => {
+    // Optional: Update Connection Status Indicator on Map?
+    // User requested minimal intrusion. Maybe just console or small dot.
+});
+
+socket.on('mp_data_update', (msg) => {
+    // { type: 'share_route', data: {...}, origin: 'User' }
+    const item = msg.data;
+    const origin = msg.origin || "Unknown";
+    item._origin = origin; // Tag it
+    item._isShared = true;
+
+    if (mpSettings.autoSave) {
+        // Auto Save to Library
+        saveSharedItemToLibrary(msg.type === 'share_route' ? 'routes' : 'pois', item);
+        showToast(`Auto-Saved ${msg.type === 'share_route' ? 'Route' : 'POI'} from ${origin}`);
+    } else {
+        // Store in Temp
+        if (msg.type === 'share_route') {
+            // Use ID as key if available, else name
+            const key = item.id || item.name;
+            tempSharedData.routes[key] = item;
+            showToast(`Received Route from ${origin}`);
+        } else if (msg.type === 'share_poi') {
+            // Check duplicates?
+            tempSharedData.pois.push(item);
+            showToast(`Received POI from ${origin}`);
+        }
+        renderMapRoutes();
+        renderPois();
+    }
+});
+
+socket.on('mp_bulk_sync', (msg) => {
+    // msg: { category: 'routes', data: [...] }
+    if (msg.category === 'routes') {
+        const list = msg.data;
+        list.forEach(item => {
+            item._isShared = true;
+            const key = item.id || item.name;
+            tempSharedData.routes[key] = item;
+        });
+        renderMapRoutes();
+    } else if (msg.category === 'pois') {
+        tempSharedData.pois = msg.data; // Replace or Append? Replace for sync usually.
+        tempSharedData.pois.forEach(p => p._isShared = true);
+        renderPois();
+    }
+});
+
+// 3. Sharing Actions
+function shareItem(type, nameOrIndex) {
+    // Send to server
+    let payload = null;
+    let mtype = "";
+
+    if (type === 'route') {
+        const r = allSavedRoutes[nameOrIndex];
+        if (!r) return;
+        payload = r;
+        if (payload.points) payload.id = nameOrIndex; // Ensure ID
+        payload.name = nameOrIndex;
+        mtype = 'share_route';
+    } else if (type === 'poi') {
+        const p = allPois[nameOrIndex];
+        if (!p) return;
+        payload = p;
+        mtype = 'share_poi';
+    }
+
+    if (payload && mtype) {
+        fetch('/api/mp/share', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: mtype, data: payload })
+        }).then(r => r.json())
+            .then(res => {
+                if (res.status === 'sent') showToast("Item Shared!");
+                else showToast("Share Failed: " + (res.error || "Unknown"));
+            });
+    }
+}
+
+function saveSharedItemToLibrary(category, item) {
+    // POST to /api/mp/save_item
+    fetch('/api/mp/save_item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: category, item: item })
+    }).then(r => r.json()).then(res => {
+        // Reload library to show it
+        if (category === 'routes') loadSavedRoutes();
+        else if (category === 'pois') loadSavedPois();
+    });
+}
+

@@ -152,7 +152,6 @@ class InputBinder:
                 hook_up = mouse.on_button(on_up, buttons=mouse_map[trigger], types=mouse.UP)
                 InputBinder._mouse_hooks.append(hook_down)
                 InputBinder._mouse_hooks.append(hook_up)
-                print(f"✅ Bound mouse button {trigger} to down/up callbacks")
             except Exception as e:
                 print(f"Mouse binding error: {e}")
             return True
@@ -264,7 +263,6 @@ class InputManager(QThread):
         screens: List of dicts {'x': int, 'y': int, 'w': int, 'h': int}
         """
         self.monitor_rects = screens
-        print(f"🖥️ InputManager: Updated Screen Geometry: {self.monitor_rects}")
 
     def _mouse_callback(self, event):
         # Runs in background thread

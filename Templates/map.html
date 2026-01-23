@@ -1896,6 +1896,8 @@
     <div id="settings-drawer" class="drawer-panel">
         <div class="panel-header">Settings & Options</div>
 
+
+
         <!-- 1. DISPLAY UNITS -->
         <div class="settings-section">
             <div class="settings-header">Display Units</div>
@@ -2110,7 +2112,66 @@
             </div>
         </div>
 
-        <!-- 4. VISUAL TUNING -->
+        <!-- 4. MULTIPLAYER SETTINGS (Moved) -->
+        <div class="settings-section">
+            <div class="settings-header">Multiplayer</div>
+
+            <div class="settings-row">
+                <span class="settings-label">Show Shared Items</span>
+                <div class="settings-control">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="chk-mp-show-shared" onchange="toggleMpSetting('showShared')">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- SHARED THREAT RINGS (Below Show Shared, with Opacity Slider) -->
+            <!-- Dependencies handled in map.js -->
+            <div class="settings-row" id="row-mp-threats">
+                <span class="settings-label">Shared Threat Rings</span>
+                <div class="settings-control">
+                    <input type="checkbox" id="chk-mp-threats" onchange="toggleMpSetting('showThreats')"
+                        style="width:16px; height:16px; cursor:pointer; margin-right:5px;">
+                    <input type="range" id="rng-mp-threat-opacity" min="0" max="100" step="0.1" value="20"
+                        oninput="updateMpThreatOpacity(this.value)" onchange="toggleMpSetting('threadOpacity')"
+                        style="flex-grow:1; cursor:pointer;">
+                </div>
+            </div>
+
+            <div class="settings-row">
+                <span class="settings-label">Auto Save Received</span>
+                <div class="settings-control">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="chk-mp-autosave" onchange="toggleMpSetting('autoSave')">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div style="border-top: 1px solid #444; margin: 4px 0;"></div>
+
+            <div class="settings-row">
+                <span class="settings-label">Share All Items</span>
+                <div class="settings-control">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="chk-mp-share-all" onchange="toggleMpSetting('shareAll')">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="settings-row" id="row-mp-coop">
+                <span class="settings-label">Co-op Mode (Edit)</span>
+                <div class="settings-control">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="chk-mp-coop" onchange="toggleMpSetting('coop')">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. VISUAL TUNING -->
         <div class="settings-section">
             <div class="settings-header">
                 <span>Map Tuning: <span id="lbl-active-map-name" style="color:#fff;">DARK</span></span>

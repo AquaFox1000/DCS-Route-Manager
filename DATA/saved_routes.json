@@ -15,15 +15,15 @@
                 "threatDetectEnabled": false
             },
             {
-                "color": "#3498db",
-                "lat": 42.25597021956332,
-                "lon": 41.364862472328085,
+                "lat": 42.14708026966005,
+                "lon": 41.544573661071986,
                 "name": "Mark",
-                "sidc": "SFGPUCDG--",
-                "threatDeadly": 2,
-                "threatDeadlyEnabled": false,
-                "threatDetect": 4,
+                "color": "#3498db",
+                "sidc": "SFGPUCDS--",
+                "threatDetect": 45,
+                "threatDeadly": 30,
                 "threatDetectEnabled": true,
+                "threatDeadlyEnabled": true,
                 "threatVisible": true
             }
         ],

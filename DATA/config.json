@@ -70,6 +70,8 @@
     },
     "digital_sensitivity": 1.0,
     "mouse_sensitivity": 1.0,
+    "mouse_enabled": true,
+    "mouse_mode": "rel",
     "test_ids": {
         "test_single_1": 197,
         "test_single_2": 199,
@@ -82,5 +84,8 @@
         "test_single_8": 200,
         "test_single_9": 215
     },
-    "mouse_enabled": true
+    "mp_host_port": 5001,
+    "mp_username": "Pilot1",
+    "mp_target_ip": "127.0.0.1",
+    "mp_target_port": 5001
 }
