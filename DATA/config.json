@@ -85,7 +85,5 @@
         "test_single_9": 215
     },
     "mp_host_port": 5001,
-    "mp_username": "Pilot1",
-    "mp_target_ip": "127.0.0.1",
-    "mp_target_port": 5001
+    "mp_username": "HostAlpha"
 }

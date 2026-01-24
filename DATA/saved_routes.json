@@ -15,76 +15,21 @@
                 "threatDetectEnabled": false
             },
             {
+                "color": "#3498db",
                 "lat": 42.14708026966005,
                 "lon": 41.544573661071986,
                 "name": "Mark",
-                "color": "#3498db",
                 "sidc": "SFGPUCDS--",
-                "threatDetect": 45,
                 "threatDeadly": 30,
-                "threatDetectEnabled": true,
                 "threatDeadlyEnabled": true,
+                "threatDetect": 45,
+                "threatDetectEnabled": true,
                 "threatVisible": true
             }
         ],
         "routes": {
-            "1234": {
+            "Route 1": {
                 "color": "#c10b0b",
-                "points": [
-                    {
-                        "alt": 6095.999804928007,
-                        "altType": "MSL",
-                        "alt_agl": 6096,
-                        "alt_msl": 6096,
-                        "lat": 42.27514176671552,
-                        "lon": 41.55301013071483,
-                        "name": "WP 1",
-                        "type": "wp"
-                    },
-                    {
-                        "alt": 6095.999804928007,
-                        "altType": "MSL",
-                        "alt_agl": 6096,
-                        "alt_msl": 6096,
-                        "lat": 42.2847975943717,
-                        "lon": 41.58458825303614,
-                        "name": "WP 2",
-                        "type": "wp"
-                    },
-                    {
-                        "alt": 6095.999804928007,
-                        "altType": "MSL",
-                        "alt_agl": 6093,
-                        "alt_msl": 6096,
-                        "lat": 42.27069450636956,
-                        "lon": 41.637104043418276,
-                        "name": "WP 3",
-                        "type": "wp"
-                    },
-                    {
-                        "alt": 6095.999804928007,
-                        "altType": "MSL",
-                        "alt_agl": 6090,
-                        "alt_msl": 6096,
-                        "lat": 42.21437768862993,
-                        "lon": 41.65701194895215,
-                        "name": "WP 4",
-                        "type": "wp"
-                    },
-                    {
-                        "alt": 6095.999804928007,
-                        "altType": "MSL",
-                        "alt_agl": 6096,
-                        "alt_msl": 6096,
-                        "lat": 42.195933484820294,
-                        "lon": 41.589908521313305,
-                        "name": "WP 5",
-                        "type": "wp"
-                    }
-                ]
-            },
-            "Unnamed Route": {
-                "color": "#78aabc",
                 "points": [
                     {
                         "alt": 6095.999804928007,

@@ -27,6 +27,8 @@ local tcp_client              = nil
 local last_heartbeat_time     = 0
 local self_data_found         = false -- SMART POLLING FLAG
 local last_world_objects_time = 0     -- Phase 2b Timer
+local phonebook               = {}    -- Unit ID → Player Name mapping
+local phonebook_dirty         = false -- Flag to send phonebook on next frame
 
 -- Logging Helper
 local function log_debug(msg)
@@ -35,6 +37,60 @@ local function log_debug(msg)
         f:write(string.format("[%s] %s\n", os.date("%H:%M:%S"), msg))
         f:close()
     end
+end
+
+-- Helper: Build and Send Phonebook
+local function send_phonebook()
+    if not tcp_client then return end
+
+    local packet = {
+        type = "phonebook",
+        data = phonebook
+    }
+
+    local payload = json:encode(packet) .. "\n"
+    safe_send(payload)
+
+    local count = 0
+    for _ in pairs(phonebook) do count = count + 1 end
+    log_debug(string.format("📞 Sent Phonebook: %d players", count))
+
+    phonebook_dirty = false
+end
+
+-- Helper: Update Phonebook from Player List
+local function update_phonebook()
+    phonebook = {} -- Clear and rebuild
+
+    local player_list = net.get_player_list()
+    if not player_list then return end
+
+    for _, player_id in ipairs(player_list) do
+        local info = net.get_player_info(player_id)
+        if info and info.slot then
+            phonebook[tostring(info.slot)] = info.name or "Unknown"
+        end
+    end
+
+    phonebook_dirty = true
+end
+
+-- TRIGGER: Player Connect
+function routeManagerHook.onPlayerConnect(id)
+    log_debug("🔗 Player Connected (ID: " .. tostring(id) .. ")")
+    update_phonebook()
+end
+
+-- TRIGGER: Player Disconnect
+function routeManagerHook.onPlayerDisconnect(id)
+    log_debug("❌ Player Disconnected (ID: " .. tostring(id) .. ")")
+    update_phonebook()
+end
+
+-- TRIGGER: Player Change Slot
+function routeManagerHook.onPlayerChangeSlot(id)
+    log_debug("🔄 Player Changed Slot (ID: " .. tostring(id) .. ")")
+    update_phonebook()
 end
 
 -- TRIGGER: Local Player Enters Unit
@@ -216,13 +272,16 @@ local function safe_frame()
                     local minimal_obj = {
                         id = id,
                         name = obj.Name or "Unknown",
-                        type = (obj.Type and obj.Type.level2) or 0,
-                        coalition = obj.CoalitionID or 0,
-                        country = obj.CountryID or 0,
                         lat = (obj.LatLongAlt and obj.LatLongAlt.Lat) or 0,
                         long = (obj.LatLongAlt and obj.LatLongAlt.Long) or 0,
                         alt = (obj.LatLongAlt and obj.LatLongAlt.Alt) or 0,
-                        heading = obj.Heading or 0
+                        heading = obj.Heading or 0,
+                        coalition = obj.CoalitionID or 0,
+                        -- Type Levels for precise icon identification
+                        type_level1 = (obj.Type and obj.Type.level1) or 0,
+                        type_level2 = (obj.Type and obj.Type.level2) or 0,
+                        type_level3 = (obj.Type and obj.Type.level3) or 0,
+                        type_level4 = (obj.Type and obj.Type.level4) or 0
                     }
                     table.insert(clean_list, minimal_obj)
                     count = count + 1
@@ -259,6 +318,11 @@ local function safe_frame()
             end
 
             last_world_objects_time = current_time
+        end
+
+        -- 3. Send Phonebook if Updated
+        if phonebook_dirty then
+            send_phonebook()
         end
 
         -- 4. Heartbeat Logic (Keep alive, 2Hz)
@@ -314,7 +378,10 @@ DCS.setUserCallbacks({
     onSimulationStart = function() routeManagerHook.onSimulationStart() end,
     onSimulationStop = function() routeManagerHook.onSimulationStop() end,
     onSimulationFrame = function() routeManagerHook.onSimulationFrame() end,
-    onPlayerEnterUnit = function(id) routeManagerHook.onPlayerEnterUnit(id) end
+    onPlayerEnterUnit = function(id) routeManagerHook.onPlayerEnterUnit(id) end,
+    onPlayerConnect = function(id) routeManagerHook.onPlayerConnect(id) end,
+    onPlayerDisconnect = function(id) routeManagerHook.onPlayerDisconnect(id) end,
+    onPlayerChangeSlot = function(id) routeManagerHook.onPlayerChangeSlot(id) end
 })
 
 log_debug("RouteManagerHook (Block 1) Loaded")

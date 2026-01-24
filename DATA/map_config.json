@@ -5,7 +5,7 @@
     "defAlt": 3000,
     "layer": "dark",
     "visibleRoutes": [
-        "1234"
+        "Route 1"
     ],
     "navFlyBy": false,
     "navCourseLine": false,
@@ -23,10 +23,10 @@
         "hillshade": true
     },
     "view": {
-        "zoom": 12,
+        "zoom": 10,
         "center": {
-            "lat": 42.20436072319069,
-            "lng": 41.66272796119253
+            "lat": 42.14710596818891,
+            "lng": 41.5619254537879
         }
     },
     "threatFill": 0,
