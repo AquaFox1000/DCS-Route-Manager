@@ -41,7 +41,24 @@ SERVER_BOOT_ID = time.time()
 CLICK_HIT_RADIUS = 13
 TCP_PORT = 11002
 
-DATA_DIR = "DATA"
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    if getattr(sys, 'frozen', False):
+        base_path = os.path.dirname(sys.executable)
+        # Check for _internal folder (PyInstaller 5.x+ onedir default)
+        internal = os.path.join(base_path, "_internal")
+        if os.path.exists(internal):
+            base_path = internal
+    else:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+# DATA_DIR should always be next to the executable, not in _internal
+if getattr(sys, 'frozen', False):
+    DATA_DIR = os.path.join(os.path.dirname(sys.executable), "DATA")
+else:
+    DATA_DIR = resource_path("DATA")
+
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
@@ -74,7 +91,13 @@ phonebook = {}  # Unit ID → Player Name mapping (from DCS Hook)
 last_metadata = None # Cache for player context
 
 # --- 4. FLASK & MODULE INITIALIZATION ---
-app = Flask(__name__, static_folder='state')
+if getattr(sys, 'frozen', False):
+    template_folder = resource_path('Templates')
+    static_folder = resource_path('static')
+    app = Flask(__name__, template_folder=template_folder, static_folder=static_folder)
+else:
+    app = Flask(__name__, static_folder='static', template_folder='Templates')
+
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
 # Initialize Modules
@@ -156,7 +179,14 @@ def execute_ap_pulse(start_id, stop_id, axis, duration):
     finally:
         ap_axis_locks[axis] = False
 
-# --- 6. SOCKET EVENTS & FLASK ROUTES ---
+@app.route('/api/app/shutdown', methods=['POST'])
+def api_shutdown():
+    print("🛑 Shutdown Requested via API")
+    cleanup()
+    os._exit(0)
+    return jsonify({"status": "shutdown"})
+
+# --- 5. SOCKET.IO EVENTS ---& FLASK ROUTES ---
 
 # ... [Socket IO Handlers] ...
 @socketio.on('toggleAP')
@@ -599,7 +629,8 @@ def start_host():
     data = request.json
     port = int(data.get('port', 5000))
     username = data.get('username', 'Host')
-    success, msg = net_man.start_host(port, username)
+    use_upnp = data.get('use_upnp', False)
+    success, msg = net_man.start_host(port, username, use_upnp=use_upnp)
     if success: return jsonify({"status": "started", "msg": msg})
     return jsonify({"status": "error", "msg": msg}), 400
 
@@ -983,30 +1014,47 @@ def hover_loop():
 
 
 # --- 8. MAIN EXECUTION ---
+
+
+
 if __name__ == '__main__':
+    # --- CHECK FOR OVERLAY MODE ---
+    if "--overlay" in sys.argv:
+        from modules import overlay
+        overlay.run()
+        sys.exit(0)
+
+    # --- NORMAL MODE (SERVER) ---
+    # 0. Launch Overlay IMMEDIATELY for responsiveness
+    overlay_process = None
+    print("🚀 Launching HUD Overlay...")
+    if getattr(sys, 'frozen', False):
+        # Frozen: Launch Self with --overlay flag
+        overlay_process = subprocess.Popen([sys.executable, "--overlay"])
+    else:
+        # Dev: Launch direct script
+        overlay_path = os.path.join("modules", "overlay.py")
+        if os.path.exists(overlay_path):
+             overlay_process = subprocess.Popen([sys.executable, overlay_path])
+
+    # 1. Start Server Logic
     socketio.start_background_task(udp_listener)
     socketio.start_background_task(command_looper)
     socketio.start_background_task(hover_loop)
-    
-    # 2. Start TCP Module
     tcp_client.start()
     
     print(f"🌍 SERVER RUNNING: http://127.0.0.1:{WEB_PORT}")
     
-    overlay_process = None
-    overlay_path = os.path.join("modules", "overlay.py")
-    if os.path.exists(overlay_path):
-        print("🚀 Launching HUD Overlay...")
-        overlay_process = subprocess.Popen([sys.executable, overlay_path])
-    
     def cleanup():
         if overlay_process: overlay_process.terminate()
         tcp_client.stop()
+        net_man.stop()
             
     atexit.register(cleanup)
     
+    # Run Server (Blocking)
     try:
-        socketio.run(app, host='0.0.0.0', port=WEB_PORT)
+        socketio.run(app, host='0.0.0.0', port=WEB_PORT, allow_unsafe_werkzeug=True)
     except KeyboardInterrupt:
         pass
     finally:

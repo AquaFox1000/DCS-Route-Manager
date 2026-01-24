@@ -6,6 +6,8 @@ import threading
 import logging
 import socket
 import time
+import upnpy
+import requests
 
 # Configure Logging
 logger = logging.getLogger("NetworkManager")
@@ -42,6 +44,11 @@ class NetworkManager:
         self.username = "Player"
         self.target_ip = "127.0.0.1"
 
+        # UPnP State
+        self.use_upnp = False
+        self.upnp_service = None
+        self.public_ip = None
+
     def start_daemon(self):
         """ Starts the Asyncio Loop in a separate Daemon Thread """
         if self.thread and self.thread.is_alive(): return
@@ -60,13 +67,30 @@ class NetworkManager:
             self.loop.close()
 
     # --- HOST LOGIC ---
-    def start_host(self, port, username):
+    def start_host(self, port, username, use_upnp=False):
         if self.mode != "IDLE": return False, "Already Active"
         self.port = port
         self.username = username
         self.mode = "HOST"
+        self.use_upnp = use_upnp
+        
+        # Helper string for status
+        upnp_msg = ""
+
+        if self.use_upnp:
+            logger.info("🌍 Attempting UPnP Discovery...")
+            if self._setup_upnp(port):
+                upnp_msg = " (UPnP Active)"
+            else:
+                upnp_msg = " (UPnP Failed)"
+        
+        # Always attempt to look up public IP if not found via UPnP
+        if not self.public_ip:
+             self.public_ip = self._get_external_ip()
+             if self.public_ip: logger.info(f"🌍 Public IP (Fallback): {self.public_ip}")
+
         asyncio.run_coroutine_threadsafe(self._start_host_server(), self.loop)
-        return True, "Host Starting..."
+        return True, f"Host Starting...{upnp_msg}"
 
     async def _start_host_server(self):
         logger.info(f"Hosting on Port {self.port}...")
@@ -141,13 +165,99 @@ class NetworkManager:
         if self.mode == "HOST" and self.host_server:
             self.host_server.close()
             asyncio.run_coroutine_threadsafe(self.host_server.wait_closed(), self.loop)
+            if self.use_upnp:
+                self._teardown_upnp()
         elif self.mode == "CLIENT" and self.client_connection:
              asyncio.run_coroutine_threadsafe(self.client_connection.close(), self.loop)
         
         self.mode = "IDLE"
         self.temp_shared_data = { "routes": [], "pois": [], "mission": {} }
+        self.use_upnp = False
         self._emit_status("STOPPED", {})
         return True, "Stopped"
+
+    # --- UPNP HELPERS ---
+    def _setup_upnp(self, port):
+        try:
+            upnp = upnpy.UPnP()
+            devices = upnp.discover()
+            
+            # Find an IGD (Internet Gateway Device)
+            if devices:
+                device = upnp.get_igd()
+                
+                # Get the service that manages WAN connections
+                # Usually WANIPConnection.1 or WANPPPConnection.1
+                for service in device.services:
+                    if "WANIPConnection" in service.service_type or "WANPPPConnection" in service.service_type:
+                        self.upnp_service = service
+                        break
+                
+                if self.upnp_service:
+                    # Get External IP
+                    # Actions often named 'GetExternalIPAddress'
+                    try:
+                        actions = self.upnp_service.get_actions()
+                        if 'GetExternalIPAddress' in actions:
+                            ip_response = self.upnp_service.GetExternalIPAddress()
+                            self.public_ip = ip_response.get('NewExternalIPAddress')
+                            logger.info(f"🌍 Public IP found: {self.public_ip}")
+                    except:
+                        logger.warning("UPnP: Could not fetch External IP")
+
+                    # Add Port Mapping
+                    # AddPortMapping(NewRemoteHost, NewExternalPort, NewProtocol, NewInternalPort, NewInternalClient, NewEnabled, NewPortMappingDescription, NewLeaseDuration)
+                    self.upnp_service.AddPortMapping(
+                        NewRemoteHost='',
+                        NewExternalPort=port,
+                        NewProtocol='TCP',
+                        NewInternalPort=port,
+                        NewInternalClient=self._get_local_ip(),
+                        NewEnabled=1,
+                        NewPortMappingDescription='DCS Route Manager',
+                        NewLeaseDuration=0
+                    )
+                    logger.info(f"🔓 UPnP Port Mapping Added: {port} (TCP) -> Local")
+                    return True
+            
+            logger.warning("UPnP: No compatible IGD found.")
+            return False
+
+        except Exception as e:
+            logger.error(f"UPnP Setup Failed: {e}")
+            return False
+
+    def _teardown_upnp(self):
+        if not self.upnp_service: return
+        try:
+            logger.info(f"🔒 Removing UPnP Mapping for Port {self.port}...")
+            self.upnp_service.DeletePortMapping(
+                NewRemoteHost='',
+                NewExternalPort=self.port,
+                NewProtocol='TCP'
+            )
+            self.upnp_service = None
+            self.public_ip = None
+        except Exception as e:
+            logger.error(f"UPnP Teardown Error: {e}")
+
+    def _get_local_ip(self):
+        """ Best guess local network IP """
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "127.0.0.1"
+
+    def _get_external_ip(self):
+        """ Fetch external IP via fallback service """
+        try:
+            return requests.get('https://api.ipify.org', timeout=3).text
+        except:
+            return None
 
     # --- MESSAGING & LOGIC ---
     async def _process_message(self, raw_msg, sender_socket):
@@ -243,5 +353,8 @@ class NetworkManager:
             "port": self.port,
             "username": self.username,
             "users": len(self.connected_clients) if self.mode == "HOST" else 0,
-            "clients": list(self.client_map.values()) if self.mode == "HOST" else []
+            "clients": list(self.client_map.values()) if self.mode == "HOST" else [],
+            "upnp": self.use_upnp,
+            "public_ip": self.public_ip,
+            "upnp_status": "Active" if self.use_upnp and self.upnp_service else "Disabled"
         }

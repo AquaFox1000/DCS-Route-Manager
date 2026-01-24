@@ -84,6 +84,8 @@
         "test_single_8": 200,
         "test_single_9": 215
     },
+    "mp_host_username": "AquaFox",
     "mp_host_port": 5001,
-    "mp_username": "HostAlpha"
+    "use_upnp": false,
+    "mp_client_username": "AquaFox"
 }

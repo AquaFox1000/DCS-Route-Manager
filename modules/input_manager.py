@@ -52,9 +52,11 @@ class OverlayConfig:
                     config = self.DEFAULT_CONFIG.copy()
                     
                     # Update all top-level keys (scalars and dicts)
+                    # Update all top-level keys (scalars and dicts)
                     for k, v in data.items():
-                        if k in config and not isinstance(config[k], dict):
-                            config[k] = v
+                        # Skip special dicts we handle below
+                        if k in ["hotkeys", "joystick", "axes", "test_ids"]: continue
+                        config[k] = v
                     
                     # Specific merge for nested dicts to preserve structure
                     config["hotkeys"].update(data.get("hotkeys", {}))

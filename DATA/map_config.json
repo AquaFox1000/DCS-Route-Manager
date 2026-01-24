@@ -23,10 +23,10 @@
         "hillshade": true
     },
     "view": {
-        "zoom": 10,
+        "zoom": 7,
         "center": {
-            "lat": 42.14710596818891,
-            "lng": 41.5619254537879
+            "lat": 42.15,
+            "lng": 42.15
         }
     },
     "threatFill": 0,

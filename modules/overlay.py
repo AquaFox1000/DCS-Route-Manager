@@ -10,10 +10,11 @@ import socket
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QSlider, QComboBox, 
                              QSpinBox, QGroupBox, QGridLayout, QMessageBox, QInputDialog,
-                             QTabWidget, QCheckBox, QScrollArea, QLineEdit, QListWidget, QListWidgetItem)
+                             QTabWidget, QCheckBox, QScrollArea, QLineEdit, QListWidget, QListWidgetItem,
+                             QSystemTrayIcon, QMenu, QAction)
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QObject, QRect, QTimer
-from PyQt5.QtGui import QIntValidator
+from PyQt5.QtGui import QIntValidator, QIcon
 
 # --- FIX IMPORT PATH FOR RELATIVE EXECUTION ---
 import sys
@@ -943,7 +944,7 @@ class MultiplayerTab(QWidget):
         host_layout.addWidget(self.spin_host_port, 0, 1)
         
         host_layout.addWidget(QLabel("Username:"), 1, 0)
-        self.edt_host_user = QLineEdit(self.config.get("mp_username", "HostAlpha"))
+        self.edt_host_user = QLineEdit(self.config.get("mp_host_username", self.config.get("mp_username", "HostAlpha")))
         host_layout.addWidget(self.edt_host_user, 1, 1)
         
         self.btn_host_start = QPushButton("Start Hosting")
@@ -951,12 +952,31 @@ class MultiplayerTab(QWidget):
         self.btn_host_start.setStyleSheet("background-color: #2b4a3b; color: #8fbc8f;")
         host_layout.addWidget(self.btn_host_start, 2, 0, 1, 2)
         
+        # UPnP Checkbox
+        self.chk_upnp = QCheckBox("Attempt Auto-Forward (UPnP)")
+        self.chk_upnp.setChecked(self.config.get("use_upnp", False))
+        host_layout.addWidget(self.chk_upnp, 3, 0, 1, 2)
+
+        # -- Persistence Signals (Host) --
+        self.spin_host_port.valueChanged.connect(lambda v: self.save_mp_config(host_port=v))
+        # -- Persistence Signals (Host) --
+        self.spin_host_port.valueChanged.connect(lambda v: self.save_mp_config(host_port=v))
+        self.edt_host_user.textChanged.connect(lambda: self.save_mp_config(host_username=self.edt_host_user.text()))
+        self.chk_upnp.stateChanged.connect(lambda v: self.save_mp_config(use_upnp=self.chk_upnp.isChecked()))
+        self.chk_upnp.stateChanged.connect(lambda v: self.save_mp_config(use_upnp=self.chk_upnp.isChecked()))
+        
         # Display Local IP for Sharing
         local_ip = self.get_lan_ip()
         self.lbl_local_ip = QLabel(f"Host IP: {local_ip}")
         self.lbl_local_ip.setStyleSheet("color: #3498db; font-weight: bold; margin-top: 5px;")
         self.lbl_local_ip.setAlignment(Qt.AlignCenter)
-        host_layout.addWidget(self.lbl_local_ip, 3, 0, 1, 2)
+        host_layout.addWidget(self.lbl_local_ip, 4, 0, 1, 2)
+
+        # Display Public IP
+        self.lbl_public_ip = QLabel("Public IP: ---")
+        self.lbl_public_ip.setStyleSheet("color: #8fbc8f; font-weight: bold;")
+        self.lbl_public_ip.setAlignment(Qt.AlignCenter)
+        host_layout.addWidget(self.lbl_public_ip, 5, 0, 1, 2)
 
         grp_host.setLayout(host_layout)
         layout.addWidget(grp_host)
@@ -974,7 +994,7 @@ class MultiplayerTab(QWidget):
         client_layout.addWidget(self.spin_client_port, 1, 1)
 
         client_layout.addWidget(QLabel("Username:"), 2, 0)
-        self.edt_client_user = QLineEdit(self.config.get("mp_username", "Pilot1"))
+        self.edt_client_user = QLineEdit(self.config.get("mp_client_username", self.config.get("mp_username", "Pilot1")))
         client_layout.addWidget(self.edt_client_user, 2, 1)
 
         self.btn_connect = QPushButton("Connect")
@@ -983,6 +1003,11 @@ class MultiplayerTab(QWidget):
         client_layout.addWidget(self.btn_connect, 3, 0, 1, 2)
         grp_client.setLayout(client_layout)
         layout.addWidget(grp_client)
+
+        # -- Persistence Signals (Client) --
+        self.edt_client_ip.textChanged.connect(lambda: self.save_mp_config(target_ip=self.edt_client_ip.text()))
+        self.spin_client_port.valueChanged.connect(lambda v: self.save_mp_config(target_port=v))
+        self.edt_client_user.textChanged.connect(lambda: self.save_mp_config(client_username=self.edt_client_user.text()))
 
         # Status
         self.lbl_status = QLabel("STATUS: IDLE")
@@ -1002,7 +1027,19 @@ class MultiplayerTab(QWidget):
         self.list_users.setVisible(False)
         layout.addWidget(self.list_users)
 
+        self.list_users = QListWidget()
+        self.list_users.setStyleSheet("background: #0f1518; border: 1px solid #444; max-height: 100px;")
+        self.list_users.setVisible(False)
+        layout.addWidget(self.list_users)
+
         layout.addStretch()
+        
+        # --- QUIT APP BUTTON ---
+        self.btn_quit = QPushButton("QUIT APPLICATION")
+        self.btn_quit.clicked.connect(self.stop_application)
+        self.btn_quit.setStyleSheet("background-color: #5a1a1a; color: #ffcccc; font-weight: bold; border: 1px solid #ff0000; margin-top:20px;")
+        layout.addWidget(self.btn_quit)
+        
         self.setLayout(layout)
 
     def on_host_click(self):
@@ -1016,9 +1053,11 @@ class MultiplayerTab(QWidget):
     def start_host(self):
         port = self.spin_host_port.value()
         user = self.edt_host_user.text()
-        self.save_mp_config(host_port=port, username=user)
+        use_upnp = self.chk_upnp.isChecked()
         
-        payload = {"port": port, "username": user}
+        self.save_mp_config(host_port=port, host_username=user, use_upnp=use_upnp)
+        
+        payload = {"port": port, "username": user, "use_upnp": use_upnp}
         try:
             requests.post(f"{SERVER_URL}/api/mp/host/start", json=payload, timeout=2)
             self.poll_status()
@@ -1028,7 +1067,7 @@ class MultiplayerTab(QWidget):
         ip = self.edt_client_ip.text()
         port = self.spin_client_port.value()
         user = self.edt_client_user.text()
-        self.save_mp_config(target_ip=ip, target_port=port, username=user)
+        self.save_mp_config(target_ip=ip, target_port=port, client_username=user)
         
         payload = {
             "ip": ip, 
@@ -1040,17 +1079,26 @@ class MultiplayerTab(QWidget):
             self.poll_status()
         except: pass
         
-    def save_mp_config(self, host_port=None, target_ip=None, target_port=None, username=None):
+    def save_mp_config(self, host_port=None, target_ip=None, target_port=None, host_username=None, client_username=None, use_upnp=None):
         if host_port: self.config["mp_host_port"] = host_port
         if target_ip: self.config["mp_target_ip"] = target_ip
         if target_port: self.config["mp_target_port"] = target_port
-        if username: self.config["mp_username"] = username
+        if host_username: self.config["mp_host_username"] = host_username
+        if client_username: self.config["mp_client_username"] = client_username
+        if use_upnp is not None: self.config["use_upnp"] = use_upnp
         self.parent_win.config_handler.save(self.config)
 
     def stop_mp(self):
         try: requests.post(f"{SERVER_URL}/api/mp/stop", timeout=2)
         except: pass
         self.poll_status()
+
+    def stop_application(self):
+        reply = QMessageBox.question(self, 'Exit', 'Shutdown Request: Make sure you saved your mission.\nExit Application?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            try: requests.post(f"{SERVER_URL}/api/app/shutdown", timeout=1)
+            except: pass
+            sys.exit(0)
 
     def poll_status(self):
         try:
@@ -1064,6 +1112,22 @@ class MultiplayerTab(QWidget):
                 if mode == "HOST":
                     self.lbl_status.setText(f"HOSTING ({users} Clients)")
                     self.lbl_status.setStyleSheet("color: #00ff00; border: 1px solid #00ff00; background: #0a200a; font-weight: bold; padding: 10px;")
+                    
+                    # Update Public IP and UPnP Status
+                    pub_ip = data.get("public_ip")
+                    upnp_stat = data.get("upnp_status", "Disabled")
+                    
+                    if pub_ip:
+                        self.lbl_public_ip.setText(f"Public IP: {pub_ip}")
+                        if upnp_stat == "Active":
+                            self.lbl_public_ip.setToolTip("UPnP Forwarding Active (Port Open)")
+                            self.lbl_public_ip.setStyleSheet("color: #00ff00; font-weight: bold;")
+                        else:
+                            self.lbl_public_ip.setToolTip("Public IP Detected (Manual Port Forwarding May Be Required)")
+                            self.lbl_public_ip.setStyleSheet("color: #f1c40f; font-weight: bold;")
+                    else:
+                        self.lbl_public_ip.setText("Public IP: ---")
+                        self.lbl_public_ip.setStyleSheet("color: #8fbc8f; font-weight: bold;")
                     
                     self.btn_host_start.setText("Stop Hosting")
                     self.btn_host_start.setStyleSheet("background-color: #5a2b2b; color: #e74c3c;")
@@ -1088,6 +1152,11 @@ class MultiplayerTab(QWidget):
                 else:
                     self.lbl_status.setText("STATUS: IDLE")
                     self.lbl_status.setStyleSheet("color: #777; border: 1px solid #444; background: #111; font-weight: bold; padding: 10px;")
+                    
+                    # Reset Public IP Label
+                    self.lbl_public_ip.setText("Public IP: ---")
+                    self.lbl_public_ip.setStyleSheet("color: #8fbc8f; font-weight: bold;")
+                    self.lbl_public_ip.setToolTip("")
                     
                     self.btn_host_start.setText("Start Hosting")
                     self.btn_host_start.setStyleSheet("background-color: #2b4a3b; color: #8fbc8f;")
@@ -1411,7 +1480,15 @@ class HUDOverlay(QMainWindow):
             self.input_mgr.reset_mouse_state()
             
         self.emit_socket_event('toggle_pointer_mode', {'active': self.pointer_active})
-    def set_settings_visible(self, visible): (self.settings_window.show() if visible else self.settings_window.hide())
+    def set_settings_visible(self, visible):
+        if visible: 
+            self.settings_win.show()
+            self.settings_win.activateWindow()
+        else: 
+            self.settings_win.hide()
+
+    def stop_application(self):
+        return self.settings_win.tab_multiplayer.stop_application()
 
     def update_global_hotkeys(self):
         InputBinder.clear_all()
@@ -1483,9 +1560,10 @@ class HUDOverlay(QMainWindow):
         except Exception as e: 
             print(f"Bind Error: {e}")
 
-if __name__ == '__main__':
+def run():
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False) # Keep running for System Tray
     
     # Init Config Manager
     config_mgr = OverlayConfig(CONFIG_FILE)
@@ -1549,4 +1627,47 @@ if __name__ == '__main__':
     # Initial Hotkey Bind
     overlay.update_global_hotkeys()
     
+    # Open Settings on Boot
+    overlay.toggle_settings()
+    
+    # --- SYSTEM TRAY ---
+    # Find Icon
+    if getattr(sys, 'frozen', False):
+        base_path = os.path.dirname(sys.executable)
+        # Check for _internal folder (PyInstaller 5.x+ onedir default)
+        internal = os.path.join(base_path, "_internal")
+        if os.path.exists(internal):
+            base_path = internal
+    else:
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # Go up from modules/
+        
+    icon_path = os.path.join(base_path, "static", "icons", "favicon.ico")
+    if not os.path.exists(icon_path):
+        icon_path = os.path.join(base_path, "DATA", "icon.ico") # Fallback?
+    
+    tray_icon = QSystemTrayIcon(QIcon(icon_path), app)
+    tray_icon.setToolTip("DCS Route Manager")
+    
+    tray_menu = QMenu()
+    
+    a_show = QAction("Show Overlay / Settings", tray_menu)
+    a_show.triggered.connect(overlay.toggle_settings)
+    tray_menu.addAction(a_show)
+    
+    a_map = QAction("Open Web Map", tray_menu)
+    a_map.triggered.connect(lambda: webbrowser.open(f"{SERVER_URL}"))
+    tray_menu.addAction(a_map)
+    
+    tray_menu.addSeparator()
+    
+    a_exit = QAction("Exit Application", tray_menu)
+    a_exit.triggered.connect(overlay.stop_application)
+    tray_menu.addAction(a_exit)
+    
+    tray_icon.setContextMenu(tray_menu)
+    tray_icon.show()
+    
     sys.exit(app.exec_())
+
+if __name__ == '__main__':
+    run()
