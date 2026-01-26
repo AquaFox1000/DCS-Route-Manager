@@ -67,6 +67,7 @@ let mpSettings = {
     sharedThreatOpacity: 0.2
 };
 let tempSharedData = { routes: {}, pois: [] }; // Storage for incoming shared data
+let autoSaveTimer = null; // Debounce timer for edits
 
 function toggleMpSetting(setting, chk) {
     mpSettings[setting] = chk.checked;
@@ -102,8 +103,21 @@ function updateMpThreatOpacity(val) {
 }
 
 function toggleShareRoute(name) {
-    // Simple trigger for now
-    socket.emit('toggle_share_route', { id: name, state: true });
+    if (allSavedRoutes[name]) {
+        // Toggle state
+        const newState = !allSavedRoutes[name].shared;
+        allSavedRoutes[name].shared = newState;
+        saveActiveMission(); // Persist
+        renderBrowserList(); // Update UI button
+
+        if (newState) {
+            socket.emit('toggle_share_route', { id: name, state: true });
+            showToast("Shared Route: " + name);
+        } else {
+            socket.emit('toggle_share_route', { id: name, state: false }); // Send unshare
+            showToast("Unshared Route: " + name);
+        }
+    }
 }
 function toggleSharePoi(index) {
     socket.emit('toggle_share_poi', { id: index, state: true });
@@ -183,20 +197,20 @@ const map = L.map('map', {
 
 let layers = {};
 // Define Base Layers
-layers['dark'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 });
-layers['light'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 });
-layers['opentopo'] = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17 });
-layers['sat'] = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
-layers['cyclosm'] = L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: 20 });
-layers['darkstreet'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20, className: 'invert-map' }); // Voyager (Streets) + Invert
-layers['vfr'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }); // Placeholder
-layers['vfr_night'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, className: 'invert-map' });
-layers['relief'] = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}', { maxZoom: 13 });
-layers['winter'] = L.tileLayer(`https://api.maptiler.com/maps/winter-v4/256/{z}/{x}/{y}.png?key=${apiKey_MapTiler}`, { maxZoom: 22 });
+layers['dark'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, keepBuffer: 6 });
+layers['light'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, keepBuffer: 6 });
+layers['opentopo'] = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, keepBuffer: 6 });
+layers['sat'] = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, keepBuffer: 6 });
+layers['cyclosm'] = L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: 20, keepBuffer: 6 });
+layers['darkstreet'] = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20, className: 'invert-map', keepBuffer: 6 }); // Voyager (Streets) + Invert
+layers['vfr'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, keepBuffer: 6 }); // Placeholder
+layers['vfr_night'] = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, className: 'invert-map', keepBuffer: 6 });
+layers['relief'] = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}', { maxZoom: 13, keepBuffer: 6 });
+layers['winter'] = L.tileLayer(`https://api.maptiler.com/maps/winter-v4/256/{z}/{x}/{y}.png?key=${apiKey_MapTiler}`, { maxZoom: 22, keepBuffer: 6 });
 
 // Thunderforest Base Maps
-layers['tf_landscape'] = L.tileLayer(`https://{s}.tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey=${apiKey_Thunderforest}`, { maxZoom: 22 });
-layers['tf_outdoors'] = L.tileLayer(`https://{s}.tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey=${apiKey_Thunderforest}`, { maxZoom: 22 });
+layers['tf_landscape'] = L.tileLayer(`https://{s}.tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey=${apiKey_Thunderforest}`, { maxZoom: 22, keepBuffer: 6 });
+layers['tf_outdoors'] = L.tileLayer(`https://{s}.tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey=${apiKey_Thunderforest}`, { maxZoom: 22, keepBuffer: 6 });
 
 
 // Set Default Layer
@@ -1780,15 +1794,51 @@ async function loadSavedRoutes() {
         } else { renderMissionList(); }
     } catch (e) { console.error("Load failed", e); }
 }
-async function saveCurrentRoute() {
-    if (!activeMissionName) { showToast("No Active Mission"); return; }
-    const name = document.getElementById('save-name').value || "Unnamed Route"; const color = document.getElementById('save-color').value; editingRouteName = name;
-    const newRouteObj = { color: color, points: editingRouteData };
-    if (!missions[activeMissionName]) return; if (!missions[activeMissionName].routes) missions[activeMissionName].routes = {};
+async function saveCurrentRoute(silent = false) {
+    if (!activeMissionName) { if (!silent) showToast("No Active Mission"); return; }
+    const name = document.getElementById('save-name').value || "Unnamed Route";
+    const color = document.getElementById('save-color').value;
+    editingRouteName = name;
+
+    // Preserve existing flags like 'shared'
+    const existing = (missions[activeMissionName].routes && missions[activeMissionName].routes[name]) || {};
+    const newRouteObj = { ...existing, color: color, points: editingRouteData };
+
+    if (!missions[activeMissionName]) return;
+    if (!missions[activeMissionName].routes) missions[activeMissionName].routes = {};
+
     missions[activeMissionName].routes[name] = newRouteObj;
     allSavedRoutes = missions[activeMissionName].routes;
-    if (activeRouteName === name || activeRouteName === "New Route") { activeRouteName = name; activeRouteData = editingRouteData; updateServerNav(); }
-    renderMapRoutes(); await saveAllMissions(); showToast("Route Saved"); showBrowser();
+
+    if (activeRouteName === name || activeRouteName === "New Route") {
+        activeRouteName = name;
+        activeRouteData = editingRouteData;
+        updateServerNav();
+    }
+
+    renderMapRoutes();
+    await saveAllMissions();
+    if (!silent) {
+        showToast("Route Saved");
+        showBrowser();
+    }
+
+    // LIVE UPDATE: If shared, broadcast immediately
+    if (newRouteObj.shared) {
+        // Send payload directly (avoid disk read latency on server)
+        // We'll assume toggle_share_route handles payload override (which we implemented)
+        socket.emit('toggle_share_route', { id: name, state: true, payload: newRouteObj });
+        if (!silent) showToast("Live Update Sent");
+    }
+}
+
+function triggerAutoSave() {
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(() => {
+        if (editingRouteName && editingRouteName !== "New Route") {
+            saveCurrentRoute(true); // Silent save
+        }
+    }, 1000);
 }
 
 // --- MISSION UI ---
@@ -1862,9 +1912,10 @@ function renderBrowserList() {
     if (Object.keys(allSavedRoutes).length === 0) { if (poiCount === 0) { const empty = document.createElement('div'); empty.innerHTML = `<div style="text-align:center; padding:10px; color:#555; font-size:11px;">No Saved Routes</div>`; list.appendChild(empty); return; } }
     Object.entries(allSavedRoutes).forEach(([name, rData]) => {
         const rColor = rData.color || "#78aabc"; const isActive = (name === activeRouteName); const isVisible = visibleRoutes.has(name) || isActive;
+        const isShared = (rData.shared === true);
         const div = document.createElement('div'); div.className = `saved-route-item ${isActive ? 'is-active' : ''}`; div.draggable = true; div.dataset.routeName = name; div.style.display = 'flex'; div.style.alignItems = 'center'; div.style.padding = '5px'; div.style.gap = '0px';
         div.addEventListener('dragstart', handleDragStart); div.addEventListener('dragend', handleDragEnd); div.onclick = () => openEditor(name);
-        div.innerHTML = `<button class="list-btn ${isVisible ? 'active' : ''}" style="width:30px; margin-right:5px;" onclick="event.stopPropagation(); toggleRouteVis('${name}')"><i class="fa-solid fa-eye"></i></button><div style="flex-grow:1; width:0; display:flex; align-items:center; justify-content:space-between; padding:0 5px; pointer-events:none;"><span style="font-weight:bold; font-size:13px; color:#d1e3ea; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</span><input type="color" class="color-picker-mini" value="${rColor}" onclick="event.stopPropagation()" onchange="updateRouteColor('${name}', this.value)" style="pointer-events:auto;"></div><button class="list-btn" style="width:30px;" onclick="event.stopPropagation(); toggleShareRoute('${name}')" title="Share Network"><i class="fa-solid fa-share-nodes"></i></button><button class="list-btn" style="width:30px;" onclick="event.stopPropagation()" title="Co-op Edit"><i class="fa-solid fa-users"></i></button><button class="list-btn ${isActive ? 'active' : ''}" style="width:30px;" onclick="event.stopPropagation(); activateRoute('${name}')"><i class="fa-solid fa-crosshairs"></i></button><button class="list-btn delete" style="width:30px;" onclick="event.stopPropagation(); deleteRoute('${name}')"><i class="fa-solid fa-trash"></i></button>`;
+        div.innerHTML = `<button class="list-btn ${isVisible ? 'active' : ''}" style="width:30px; margin-right:5px;" onclick="event.stopPropagation(); toggleRouteVis('${name}')"><i class="fa-solid fa-eye"></i></button><div style="flex-grow:1; width:0; display:flex; align-items:center; justify-content:space-between; padding:0 5px; pointer-events:none;"><span style="font-weight:bold; font-size:13px; color:#d1e3ea; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</span><input type="color" class="color-picker-mini" value="${rColor}" onclick="event.stopPropagation()" onchange="updateRouteColor('${name}', this.value)" style="pointer-events:auto;"></div><button class="list-btn ${isShared ? 'active' : ''}" style="width:30px;" onclick="event.stopPropagation(); toggleShareRoute('${name}')" title="Share Network"><i class="fa-solid fa-share-nodes"></i></button><button class="list-btn" style="width:30px;" onclick="event.stopPropagation()" title="Co-op Edit"><i class="fa-solid fa-users"></i></button><button class="list-btn ${isActive ? 'active' : ''}" style="width:30px;" onclick="event.stopPropagation(); activateRoute('${name}')"><i class="fa-solid fa-crosshairs"></i></button><button class="list-btn delete" style="width:30px;" onclick="event.stopPropagation(); deleteRoute('${name}')"><i class="fa-solid fa-trash"></i></button>`;
         list.appendChild(div);
     });
 }
@@ -2050,6 +2101,7 @@ function handleWpDrop(e) {
     if (e.stopPropagation) e.stopPropagation(); const container = document.getElementById('active-route-list'); const rows = [...container.querySelectorAll('.route-item')]; const newArray = []; let newEditIndex = -1;
     rows.forEach((row, newIndex) => { const oldIndex = parseInt(row.dataset.index); newArray.push(editingRouteData[oldIndex]); if (activeEditIndex === oldIndex) { newEditIndex = newIndex; } });
     editingRouteData = newArray; activeEditIndex = newEditIndex; renderEditorPoints(); renderEditorMap();
+    triggerAutoSave();
 }
 function renderEditorMap() {
     editorLayer.clearLayers(); if (editingRouteData.length === 0) return; const latlngs = editingRouteData.map(p => [p.lat, p.lon]); const color = document.getElementById('save-color').value || "#78aabc"; if (latlngs.length > 1) L.polyline(latlngs, { color: color, weight: 3, dashArray: '5, 5' }).addTo(editorLayer);
@@ -2057,7 +2109,15 @@ function renderEditorMap() {
         const isTgt = pt.type === 'tgt'; const isEditing = (activeEditIndex === i); const markerColor = isEditing ? '#00ff00' : (isTgt ? '#e74c3c' : '#ffffff'); const iconHtml = isTgt ? `<div style="color:${markerColor}; font-size:24px; filter:drop-shadow(0 0 3px black);">🎯</div>` : `<div style="color:${markerColor}; font-size:24px; filter:drop-shadow(0 0 3px black);"><i class="fa-solid fa-location-dot"></i></div>`; const icon = L.divIcon({ className: 'edit-icon', html: iconHtml, iconSize: [24, 24], iconAnchor: [12, 24] });
         const m = L.marker([pt.lat, pt.lon], { icon: icon, draggable: true }).addTo(editorLayer); if (showWpLabels) { m.bindTooltip(`${pt.name}`, { permanent: true, direction: 'right', className: 'airport-label' }); }
         m.on('dragstart', () => { clearTimeout(pressTimer); });
-        m.on('dragend', function (event) { const newPos = event.target.getLatLng(); editingRouteData[i].lat = newPos.lat; editingRouteData[i].lon = newPos.lng; renderEditorMap(); renderEditorPoints(); if (activeEditIndex === i) fillManualForm(i); }); m.on('click', () => startManualEdit(i));
+        m.on('dragend', function (event) {
+            const newPos = event.target.getLatLng();
+            editingRouteData[i].lat = newPos.lat;
+            editingRouteData[i].lon = newPos.lng;
+            renderEditorMap();
+            renderEditorPoints();
+            if (activeEditIndex === i) fillManualForm(i);
+            triggerAutoSave();
+        }); m.on('click', () => startManualEdit(i));
     });
 }
 async function calculateDualAltitudes(lat, lon, val, type) { const elevM = await getGroundElevation(lat, lon); const inputMeters = parseFloat(val); let msl = 0, agl = 0; if (type === 'AGL') { agl = inputMeters; msl = inputMeters + elevM; } else { msl = inputMeters; agl = inputMeters - elevM; } return { msl: Math.round(msl), agl: Math.round(agl) }; }
@@ -2070,12 +2130,15 @@ function addManualPoint() {
 function updateManualPoint(index) {
     const type = document.getElementById('inp-type').value; const rawAlt = parseFloat(document.getElementById('global-alt').value) || 0; const altMeters = fromDisplayAlt(rawAlt); const altType = document.getElementById('global-alt-type').value; const newName = document.getElementById('inp-name').value; let newLat = 0, newLon = 0;
     if (settings.coords === 'mgrs') { let val = document.getElementById('inp-mgrs').value.trim().toUpperCase(); const rawMatch = val.match(/^(\d{1,2}[C-X])([A-Z]{2})(\d{5})(\d{5})$/); if (rawMatch) val = `${rawMatch[1]} ${rawMatch[2]} ${rawMatch[3]} ${rawMatch[4]}`; const result = LatLongFromMGRSstring(val); if (result && result[0]) { newLat = result[1]; newLon = result[2]; } else { alert("Invalid MGRS format"); return; } } else { newLat = parseDMS(document.getElementById('inp-lat').value); newLon = parseDMS(document.getElementById('inp-lon').value); }
-    if (!newLat || !newLon) { alert("Invalid Coordinates"); return; } editingRouteData[index] = { name: newName, lat: newLat, lon: newLon, alt: altMeters, altType: altType, type: type }; closeManualInput();
+    if (!newLat || !newLon) { alert("Invalid Coordinates"); return; }
+    editingRouteData[index] = { name: newName, lat: newLat, lon: newLon, alt: altMeters, altType: altType, type: type };
+    closeManualInput();
+    triggerAutoSave();
 }
 function startManualEdit(index) { activeEditIndex = index; const pt = editingRouteData[index]; document.getElementById('manual-form').style.display = 'block'; document.getElementById('inp-name').value = pt.name; document.getElementById('inp-type').value = pt.type; document.getElementById('global-alt').value = pt.alt; document.getElementById('global-alt-type').value = pt.altType || 'MSL'; fillManualForm(index); const btn = document.getElementById('btn-add-point'); btn.innerText = "Update Point"; btn.onclick = () => updateManualPoint(index); renderEditorMap(); }
 function fillManualForm(index) { const pt = editingRouteData[index]; const displayVal = toDisplayAlt(pt.alt); document.getElementById('global-alt').value = displayVal; if (settings.coords === 'mgrs') { try { document.getElementById('inp-mgrs').value = MGRSString(pt.lat, pt.lon); } catch (e) { } } else { document.getElementById('inp-lat').value = toDmsInput(pt.lat, true); document.getElementById('inp-lon').value = toDmsInput(pt.lon, false); } }
 function closeManualInput() { activeEditIndex = -1; document.getElementById('manual-form').style.display = 'none'; if (typeof closeKeyboard === 'function') closeKeyboard(); const btn = document.getElementById('btn-add-point'); if (btn) { btn.innerText = "Add Point"; btn.onclick = addManualPoint; } renderEditorMap(); renderEditorPoints(); }
-function deleteEditorPoint(i) { editingRouteData.splice(i, 1); renderEditorPoints(); }
+function deleteEditorPoint(i) { editingRouteData.splice(i, 1); renderEditorPoints(); triggerAutoSave(); }
 function toggleMeasureTool() { distMode = !distMode; document.getElementById('btn-measure').classList.toggle('active', distMode); if (distMode) { document.getElementById('map').style.cursor = 'crosshair'; setClickMode('none'); } else { document.getElementById('map').style.cursor = 'default'; measureLayer.clearLayers(); distStart = null; } }
 function drawMeasureLine(start, end, isFinal, isRemote = false) {
     if (!isFinal) measureLayer.clearLayers();
@@ -3373,12 +3436,19 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     // Poll for any existing shared data (in case of reconnect)
     fetch('/api/mp/temp_data').then(r => r.json()).then(data => {
-        if (data.routes) tempSharedData.routes = data.routes; // Array? Backend said list in list, dict in python?
-        // Python temp_shared_data['routes'] is list.
-        // Let's normalize. Ideally we map ID->Data
-        if (Array.isArray(data.routes)) {
-            data.routes.forEach(r => { if (r.id) tempSharedData.routes[r.id] = r; });
+        if (data.routes) {
+            // FIX: Backend sends list, we need Object for frontend logic
+            if (Array.isArray(data.routes)) {
+                data.routes.forEach(r => {
+                    const key = r.id || r.name;
+                    if (key) tempSharedData.routes[key] = r;
+                });
+            } else {
+                // If already object (future proof)
+                Object.assign(tempSharedData.routes, data.routes);
+            }
         }
+
         if (Array.isArray(data.pois)) {
             tempSharedData.pois = data.pois;
         }
@@ -3449,11 +3519,19 @@ socket.on('mp_bulk_sync', (msg) => {
     // msg: { category: 'routes', data: [...] }
     if (msg.category === 'routes') {
         const list = msg.data;
-        list.forEach(item => {
-            item._isShared = true;
-            const key = item.id || item.name;
-            tempSharedData.routes[key] = item;
-        });
+        if (Array.isArray(list)) {
+            list.forEach(item => {
+                item._isShared = true;
+                const key = item.id || item.name;
+                if (key) tempSharedData.routes[key] = item;
+            });
+        } else {
+            // Fallback if data is object
+            Object.keys(list).forEach(k => {
+                list[k]._isShared = true;
+                tempSharedData.routes[k] = list[k];
+            });
+        }
         renderMapRoutes();
     } else if (msg.category === 'pois') {
         tempSharedData.pois = msg.data; // Replace or Append? Replace for sync usually.
@@ -3507,4 +3585,31 @@ function saveSharedItemToLibrary(category, item) {
         else if (category === 'pois') loadSavedPois();
     });
 }
+
+// --- REMOVAL HANDLER ---
+socket.on('mp_data_remove', function (msg) {
+    // Remove item from tempSharedData
+    const cat = msg.category;
+    const id = msg.id;
+    const name = msg.name;
+
+    if (cat === 'routes') {
+        // Filter out matching items: ID match OR Name Match
+        const newRoutes = {};
+        for (const [key, val] of Object.entries(tempSharedData.routes)) {
+            let match = false;
+            if (val.id !== undefined && val.id === id) match = true;
+            if (val.name === name) match = true;
+
+            if (!match) {
+                newRoutes[key] = val;
+            }
+        }
+        tempSharedData.routes = newRoutes;
+        renderMapRoutes();
+        // showToast(`Reference Removed: ${name}`);
+    } else if (cat === 'pois') {
+        tempSharedData.pois = tempSharedData.pois.filter(p => p.id !== id);
+    }
+});
 

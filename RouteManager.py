@@ -114,10 +114,10 @@ def handle_tcp_message(event_name, data):
     if event_name == 'phonebook':
         # Update server-side phonebook state
         phonebook = data
-        print(f"📞 Phonebook updated: {len(data)} players")
+        print(f"Phonebook updated: {len(data)} players")
     elif event_name == 'metadata':
         last_metadata = data
-        print(f"👤 Metadata updated for: {data.get('player_name', 'Unknown')}")
+        print(f"Metadata updated for: {data.get('player_name', 'Unknown')}")
     
     # Emit to all connected web clients
     socketio.emit(event_name, data)
@@ -181,7 +181,7 @@ def execute_ap_pulse(start_id, stop_id, axis, duration):
 
 @app.route('/api/app/shutdown', methods=['POST'])
 def api_shutdown():
-    print("🛑 Shutdown Requested via API")
+    print("Shutdown Requested via API")
     cleanup()
     os._exit(0)
     return jsonify({"status": "shutdown"})
@@ -193,15 +193,15 @@ def api_shutdown():
 def handle_ap_toggle(data=None):
     if nav.ap_engaged:
         nav.disengage_ap()
-        print("🤖 AP: DISENGAGED")
+        print("AP: DISENGAGED")
         socketio.emit('msg', "Autopilot OFF")
     else:
         success = nav.engage_ap()
         if success:
-            print("🤖 AP: ENGAGED")
+            print("AP: ENGAGED")
             socketio.emit('msg', "Autopilot ON")
         else:
-            print("⚠️ AP Error: No Route Active")
+            print("AP Error: No Route Active")
             socketio.emit('msg', "AP Error: No Route")
 
 @socketio.on('toggle_clickable')
@@ -211,7 +211,7 @@ def handle_toggle_clickable(data):
     clickable_mode_enabled = state
     hud_data["clickable_enabled"] = state
     save_json_file(HUD_CONFIG_FILE, hud_data)
-    print(f"👉 Clickable Cockpit: {'ENABLED' if state else 'DISABLED'}")
+    print(f"Clickable Cockpit: {'ENABLED' if state else 'DISABLED'}")
     socketio.emit('msg', f"Clickable Mode: {'ON' if state else 'OFF'}")
     if not state:
         socketio.emit('hover_status', {'active': False})
@@ -238,7 +238,7 @@ def handle_mark_clickable(data):
     }
     points.append(new_entry)
     save_json_file(CLICKABLE_FILE, points)
-    print(f"📍 SAVED Point {new_id}: {body_point}")
+    print(f"SAVED Point {new_id}: {body_point}")
     socketio.emit('msg', f"Saved Point {new_id}")
 
 @socketio.on('update_clickable_point')
@@ -328,13 +328,13 @@ def handle_pointer_toggle(data):
         virtual_pointer_state['y'] = 0.5
         virtual_pointer_state['mode'] = 'pct'
         
-    print(f"🖱️ Pointer Mode: {'ON' if virtual_pointer_state['active'] else 'OFF'}")
+    print(f"Pointer Mode: {'ON' if virtual_pointer_state['active'] else 'OFF'}")
     socketio.emit('pointer_mode_changed', virtual_pointer_state)
 
 @socketio.on('virtual_click')
 def handle_virtual_click(data):
     # data: { 'action': 'click' / 'down' / 'up' }
-    print(f"📤 Relaying click to frontend: {data}")
+    print(f"Relaying click to frontend: {data}")
     # Pass through to frontend
     socketio.emit('pointer_click_event', data)
 
@@ -389,10 +389,10 @@ def handle_interaction(data=None):
                 cmd_id = str(act_val)
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                     s.sendto(cmd_id.encode(), DCS_INPUT_ADDR)
-                print(f"    ✅ Sent DCS Command: {cmd_id}")
+                print(f"    Sent DCS Command: {cmd_id}")
                 socketio.emit('msg', f"Action: {hit_found['name']}")
             except Exception as e:
-                print(f"    ❌ Socket Error: {e}")
+                print(f"    Socket Error: {e}")
         elif act_type == 'app' or act_type == 'function':
             if act_val == "engageAP": handle_ap_toggle()
             elif act_val == "mark_target": handle_mark_look_point()
@@ -402,7 +402,7 @@ def handle_interaction(data=None):
             elif act_val == "set_active_poi": handle_activate_last_poi()
             elif act_val == "toggle_hud": socketio.emit('toggle_hud_visibility') 
             else:
-                print(f"    ⚠️ Unmapped Function: {act_val}")
+                print(f"    Unmapped Function: {act_val}")
                 socketio.emit('msg', f"Unknown Func: {act_val}")
 
 @socketio.on('connect')
@@ -438,7 +438,7 @@ def handle_loop_stop(data):
 def handle_mark_look_point(data=None):
     global valid_look_cache
     global tgt_sequence_id 
-    print("🔭 TRIGGER: Sending Raycast + Visual A-G Toggle...")
+    print("TRIGGER: Sending Raycast + Visual A-G Toggle...")
     try:
         dcs_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         dcs_sock.sendto("10001".encode(), DCS_INPUT_ADDR)
@@ -450,7 +450,7 @@ def handle_mark_look_point(data=None):
     lat, lon, alt = valid_look_cache['lat'], valid_look_cache['lon'], valid_look_cache['alt']
     
     if lat == 0 and lon == 0:
-        print("⚠️ MARK FAILED: No valid Look Data received yet.")
+        print("MARK FAILED: No valid Look Data received yet.")
         return
 
     timestamp = int(time.time())
@@ -458,7 +458,7 @@ def handle_mark_look_point(data=None):
     new_poi = { "lat": lat, "lon": lon, "alt": alt, "name": poi_name, "color": "#e74c3c", "sidc": "SHGPU-------", "source": "visual", "time": timestamp }
 
     tgt_sequence_id += 1 
-    print(f"🎯 MARKER: Sending {poi_name} to Client")
+    print(f"MARKER: Sending {poi_name} to Client")
     socketio.emit('visual_target_added', new_poi)
 
 @socketio.on('update_pois')
@@ -614,10 +614,10 @@ def handle_dcs_multi_command(data):
 @socketio.on('dcs_key')
 def handle_dcs_key(data):
     key_name = data.get('key')
-    print(f"⌨️  Server received key request: {key_name}")
+    print(f"Server received key request: {key_name}")
     try:
         keyboard.press(key_name); time.sleep(0.1); keyboard.release(key_name)
-    except Exception as e: print(f"❌ Key Emulation Error: {e}")
+    except Exception as e: print(f"Key Emulation Error: {e}")
 
 # ... [Flask Routes] ...
 @app.route('/api/mp/status', methods=['GET'])
@@ -629,8 +629,9 @@ def start_host():
     data = request.json
     port = int(data.get('port', 5000))
     username = data.get('username', 'Host')
+    password = data.get('password') # Optional
     use_upnp = data.get('use_upnp', False)
-    success, msg = net_man.start_host(port, username, use_upnp=use_upnp)
+    success, msg = net_man.start_host(port, username, password=password, use_upnp=use_upnp)
     if success: return jsonify({"status": "started", "msg": msg})
     return jsonify({"status": "error", "msg": msg}), 400
 
@@ -640,7 +641,8 @@ def connect_client():
     ip = data.get('ip', '127.0.0.1')
     port = int(data.get('port', 5000))
     username = data.get('username', 'Client')
-    success, msg = net_man.connect_to_host(ip, port, username)
+    password = data.get('password') # Optional
+    success, msg = net_man.connect_to_host(ip, port, username, password=password)
     if success: return jsonify({"status": "connecting", "msg": msg})
     return jsonify({"status": "error", "msg": msg}), 400
 
@@ -950,7 +952,7 @@ def command_looper():
         except: time.sleep(1)
 
 def hover_loop():
-    print("👀 Hover Detector Started")
+    print("Hover Detector Started")
     cached_points = []
     last_cache_time = 0
     while True:
@@ -1027,7 +1029,7 @@ if __name__ == '__main__':
     # --- NORMAL MODE (SERVER) ---
     # 0. Launch Overlay IMMEDIATELY for responsiveness
     overlay_process = None
-    print("🚀 Launching HUD Overlay...")
+    print("Launching HUD Overlay...")
     if getattr(sys, 'frozen', False):
         # Frozen: Launch Self with --overlay flag
         overlay_process = subprocess.Popen([sys.executable, "--overlay"])
@@ -1043,7 +1045,7 @@ if __name__ == '__main__':
     socketio.start_background_task(hover_loop)
     tcp_client.start()
     
-    print(f"🌍 SERVER RUNNING: http://127.0.0.1:{WEB_PORT}")
+    print(f"SERVER RUNNING: http://127.0.0.1:{WEB_PORT}")
     
     def cleanup():
         if overlay_process: overlay_process.terminate()

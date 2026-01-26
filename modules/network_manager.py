@@ -48,6 +48,9 @@ class NetworkManager:
         self.use_upnp = False
         self.upnp_service = None
         self.public_ip = None
+        self.password = None
+        self.client_msg_rates = {}
+
 
     def start_daemon(self):
         """ Starts the Asyncio Loop in a separate Daemon Thread """
@@ -55,7 +58,7 @@ class NetworkManager:
         self.running = True
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
-        logger.info("📡 NetworkManager Daemon Started")
+        logger.info("NetworkManager Daemon Started")
 
     def _run_loop(self):
         """ maintain a dedicated asyncio loop """
@@ -67,10 +70,11 @@ class NetworkManager:
             self.loop.close()
 
     # --- HOST LOGIC ---
-    def start_host(self, port, username, use_upnp=False):
+    def start_host(self, port, username, password=None, use_upnp=False):
         if self.mode != "IDLE": return False, "Already Active"
         self.port = port
         self.username = username
+        self.password = password
         self.mode = "HOST"
         self.use_upnp = use_upnp
         
@@ -78,7 +82,7 @@ class NetworkManager:
         upnp_msg = ""
 
         if self.use_upnp:
-            logger.info("🌍 Attempting UPnP Discovery...")
+            logger.info("Attempting UPnP Discovery...")
             if self._setup_upnp(port):
                 upnp_msg = " (UPnP Active)"
             else:
@@ -87,7 +91,7 @@ class NetworkManager:
         # Always attempt to look up public IP if not found via UPnP
         if not self.public_ip:
              self.public_ip = self._get_external_ip()
-             if self.public_ip: logger.info(f"🌍 Public IP (Fallback): {self.public_ip}")
+             if self.public_ip: logger.info(f"Public IP (Fallback): {self.public_ip}")
 
         asyncio.run_coroutine_threadsafe(self._start_host_server(), self.loop)
         return True, f"Host Starting...{upnp_msg}"
@@ -104,24 +108,50 @@ class NetworkManager:
             self._emit_status("ERROR", {"msg": str(e)})
 
     async def _handle_client(self, websocket): 
-        # New Client Connected
-        self.connected_clients.add(websocket)
-        logger.info(f"New Client: {websocket.remote_address}")
-        self._emit_status("CLIENT_JOINED", {"count": len(self.connected_clients)})
+        # New Client Connected - WAIT FOR AUTH
+        logger.info(f"New Connection: {websocket.remote_address}")
         
-        # Send current shared state to new client
-        await self._sync_state_to_client(websocket)
-
+        authenticated = False
         try:
+            # Wait for Identification and Password
+            auth_msg_raw = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+            auth_msg = json.loads(auth_msg_raw)
+            
+            if auth_msg.get("type") == "identify":
+                client_pass = auth_msg.get("password")
+                username = auth_msg.get("username", "Unknown")
+                
+                # PASSWORD CHECK
+                if self.password and client_pass != self.password:
+                    logger.warning(f"Authentication Failed for {username}")
+                    await websocket.send(json.dumps({"type": "error", "msg": "Invalid Password"}))
+                    await websocket.close()
+                    return
+
+                # Auth Success
+                authenticated = True
+                self.connected_clients.add(websocket)
+                self.client_map[websocket] = username
+                logger.info(f"Client Authenticated: {username}")
+                self._emit_status("CLIENT_JOINED", {"count": len(self.connected_clients)})
+                
+                # Send current shared state
+                await self._sync_state_to_client(websocket)
+            else:
+                await websocket.close()
+                return
+
             async for message in websocket:
                 await self._process_message(message, websocket)
-        except websockets.ConnectionClosed:
-           pass
+                
+        except (asyncio.TimeoutError, websockets.ConnectionClosed, json.JSONDecodeError):
+            pass
         finally:
-            self.connected_clients.remove(websocket)
-            if websocket in self.client_map: del self.client_map[websocket]
-            logger.info("Client Disconnected")
-            self._emit_status("CLIENT_LEFT", {"count": len(self.connected_clients)})
+            if authenticated:
+                self.connected_clients.discard(websocket)
+                if websocket in self.client_map: del self.client_map[websocket]
+                logger.info("Client Disconnected")
+                self._emit_status("CLIENT_LEFT", {"count": len(self.connected_clients)})
 
     async def _sync_state_to_client(self, websocket):
         """ Send all currently valid temp data to new joiner """
@@ -133,11 +163,12 @@ class NetworkManager:
              await websocket.send(json.dumps(msg))
 
     # --- CLIENT LOGIC ---
-    def connect_to_host(self, ip, port, username):
+    def connect_to_host(self, ip, port, username, password=None):
         if self.mode != "IDLE": return False, "Already Active"
         self.target_ip = ip
         self.port = port
         self.username = username 
+        self.password = password
         self.mode = "CLIENT"
         asyncio.run_coroutine_threadsafe(self._connect_client(), self.loop)
         return True, "Connecting..."
@@ -150,8 +181,12 @@ class NetworkManager:
                 self.client_connection = websocket
                 self._emit_status("CONNECTED", {"host": self.target_ip})
                 
-                # Send Handshake / Identify
-                await websocket.send(json.dumps({"type": "identify", "username": self.username}))
+                # Send Handshake / Identify with Password
+                await websocket.send(json.dumps({
+                    "type": "identify", 
+                    "username": self.username,
+                    "password": self.password 
+                }))
 
                 async for message in websocket:
                     await self._process_message(message, websocket)
@@ -201,7 +236,7 @@ class NetworkManager:
                         if 'GetExternalIPAddress' in actions:
                             ip_response = self.upnp_service.GetExternalIPAddress()
                             self.public_ip = ip_response.get('NewExternalIPAddress')
-                            logger.info(f"🌍 Public IP found: {self.public_ip}")
+                            logger.info(f"Public IP found: {self.public_ip}")
                     except:
                         logger.warning("UPnP: Could not fetch External IP")
 
@@ -217,7 +252,7 @@ class NetworkManager:
                         NewPortMappingDescription='DCS Route Manager',
                         NewLeaseDuration=0
                     )
-                    logger.info(f"🔓 UPnP Port Mapping Added: {port} (TCP) -> Local")
+                    logger.info(f"UPnP Port Mapping Added: {port} (TCP) -> Local")
                     return True
             
             logger.warning("UPnP: No compatible IGD found.")
@@ -230,7 +265,7 @@ class NetworkManager:
     def _teardown_upnp(self):
         if not self.upnp_service: return
         try:
-            logger.info(f"🔒 Removing UPnP Mapping for Port {self.port}...")
+            logger.info(f"Removing UPnP Mapping for Port {self.port}...")
             self.upnp_service.DeletePortMapping(
                 NewRemoteHost='',
                 NewExternalPort=self.port,
@@ -261,6 +296,22 @@ class NetworkManager:
 
     # --- MESSAGING & LOGIC ---
     async def _process_message(self, raw_msg, sender_socket):
+        # FLOOD CONTROL (HOST ONLY)
+        if self.mode == "HOST":
+            now = time.time()
+            if sender_socket not in self.client_msg_rates:
+                self.client_msg_rates[sender_socket] = {"count": 0, "start": now}
+            
+            rate = self.client_msg_rates[sender_socket]
+            if now - rate["start"] > 1.0:
+                rate["count"] = 0
+                rate["start"] = now
+            
+            rate["count"] += 1
+            if rate["count"] > 20: # 20 msgs per second limit (generous)
+                if rate["count"] == 21: logger.warning(f"Flood limit hit for {self.client_map.get(sender_socket)}")
+                return 
+
         try:
             msg = json.loads(raw_msg)
             mtype = msg.get("type")
@@ -301,16 +352,35 @@ class NetworkManager:
 
     def _handle_shared_data(self, msg):
         """ valid data received from network """
-        # Add 'origin' if missing? usually incoming has it.
         # Store in Temp
         category = "routes" if msg["type"] == "share_route" else "pois"
         item = msg.get("data")
+        sender = msg.get("origin", "Unknown")
         
         # Check if exists, update or append
-        existing = next((x for x in self.temp_shared_data[category] if x.get("id") == item.get("id")), None)
-        if existing:
-            existing.update(item)
+        existing_idx = next((i for i, x in enumerate(self.temp_shared_data[category]) if x.get("id") == item.get("id")), -1)
+        
+        if existing_idx != -1:
+            existing = self.temp_shared_data[category][existing_idx]
+            
+            # OWNERSHIP / CO-OP Logic
+            # Shared = Read Only (unless Owner)
+            # Co-op = Collaborative (Anyone can edit)
+            
+            owner = existing.get("owner", sender)
+            is_coop = existing.get("coop", False) or item.get("coop", False)
+            
+            # If not owner and not co-op, reject modification
+            if owner != sender and not is_coop:
+                logger.warning(f"REJECTED: Update to {item.get('name')} by {sender} (Owner: {owner})")
+                return 
+
+            self.temp_shared_data[category][existing_idx].update(item)
+            # Persist Owner
+            self.temp_shared_data[category][existing_idx]["owner"] = owner
         else:
+            # New Item - Set Owner
+            item["owner"] = sender
             self.temp_shared_data[category].append(item)
             
         # Emit to Flask Logic (to update Map)

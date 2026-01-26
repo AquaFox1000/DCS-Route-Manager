@@ -243,14 +243,14 @@ class InputManager(QThread):
             try:
                 self.last_mouse_pos = mouse.get_position()
                 self.mouse_hook_ref = mouse.hook(self._mouse_callback)
-                print("🖱️ Mouse Hook ENABLED")
+                print("Mouse Hook ENABLED")
             except Exception as e:
                 print(f"Mouse Hook Error: {e}")
         elif not enable and self.mouse_hook_ref:
             try:
                 mouse.unhook(self.mouse_hook_ref)
                 self.mouse_hook_ref = None
-                print("🖱️ Mouse Hook DISABLED")
+                print("Mouse Hook DISABLED")
             except: pass
 
     def reset_mouse_state(self):
@@ -333,7 +333,7 @@ class InputManager(QThread):
     def scan_devices(self):
         self.joysticks = {}
         count = pygame.joystick.get_count()
-        print(f"🎮 Found {count} Joysticks/Controllers")
+        print(f"Found {count} Joysticks/Controllers")
         for i in range(count):
             try:
                 j = pygame.joystick.Joystick(i)
@@ -451,7 +451,7 @@ class InputManager(QThread):
                 # POINTER ACTIONS
                 if action_name.startswith("pointer_"):
                     if action_name == "pointer_click":
-                        print(f"🖱️ Click button: {'DOWN' if is_pressed else 'UP'}")
+                        print(f"Click button: {'DOWN' if is_pressed else 'UP'}")
                         self.pointer_button.emit("click", is_pressed)
                     elif action_name == "pointer_left":  self.digital_state["left"] = is_pressed
                     elif action_name == "pointer_right": self.digital_state["right"] = is_pressed

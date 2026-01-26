@@ -39,6 +39,19 @@ local function log_debug(msg)
     end
 end
 
+
+-- Helper: Safe Send with Disconnect Handling
+local function safe_send(payload)
+    if not tcp_client then return end
+    local i, err = tcp_client:send(payload)
+    if err and err ~= "timeout" then
+        log_debug("Send Failed (" .. tostring(err) .. "). Closing Connection.")
+        tcp_client:close()
+        tcp_client = nil
+        self_data_found = false
+    end
+end
+
 -- Helper: Build and Send Phonebook
 local function send_phonebook()
     if not tcp_client then return end
@@ -145,22 +158,7 @@ local function setup_server()
     log_debug("✅ Block 1 FSM Initialized: Waiting for Client...")
 end
 
--- Helper: Safe Send with Disconnect Handling
-local function safe_send(payload)
-    if not tcp_client then return end
 
-    local i, err = tcp_client:send(payload)
-
-    -- If error (closed, broken pipe, etc.)
-    -- Note: 'timeout' on send usually means buffer full, which is rare for us but not a fatal disconnect.
-    -- However, if server died, we likely get 'closed' or 'broken pipe'.
-    if err and err ~= "timeout" then
-        log_debug("❌ Send Failed (" .. tostring(err) .. "). Closing Connection.")
-        tcp_client:close()
-        tcp_client = nil
-        self_data_found = false
-    end
-end
 
 -- safe_frame: The Core FSM Loop
 local function safe_frame()

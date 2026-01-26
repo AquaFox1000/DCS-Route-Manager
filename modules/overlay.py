@@ -946,22 +946,30 @@ class MultiplayerTab(QWidget):
         host_layout.addWidget(QLabel("Username:"), 1, 0)
         self.edt_host_user = QLineEdit(self.config.get("mp_host_username", self.config.get("mp_username", "HostAlpha")))
         host_layout.addWidget(self.edt_host_user, 1, 1)
+
+        host_layout.addWidget(QLabel("Password:"), 2, 0)
+        self.edt_host_pass = QLineEdit(self.config.get("mp_host_password", ""))
+        self.edt_host_pass.setEchoMode(QLineEdit.Password)
+        self.edt_host_pass.setPlaceholderText("(Optional)")
+        host_layout.addWidget(self.edt_host_pass, 2, 1)
         
         self.btn_host_start = QPushButton("Start Hosting")
         self.btn_host_start.clicked.connect(self.on_host_click)
         self.btn_host_start.setStyleSheet("background-color: #2b4a3b; color: #8fbc8f;")
-        host_layout.addWidget(self.btn_host_start, 2, 0, 1, 2)
+        host_layout.addWidget(self.btn_host_start, 3, 0, 1, 2)
         
         # UPnP Checkbox
         self.chk_upnp = QCheckBox("Attempt Auto-Forward (UPnP)")
         self.chk_upnp.setChecked(self.config.get("use_upnp", False))
-        host_layout.addWidget(self.chk_upnp, 3, 0, 1, 2)
+        host_layout.addWidget(self.chk_upnp, 4, 0, 1, 2)
 
         # -- Persistence Signals (Host) --
         self.spin_host_port.valueChanged.connect(lambda v: self.save_mp_config(host_port=v))
         # -- Persistence Signals (Host) --
         self.spin_host_port.valueChanged.connect(lambda v: self.save_mp_config(host_port=v))
+        self.spin_host_port.valueChanged.connect(lambda v: self.save_mp_config(host_port=v))
         self.edt_host_user.textChanged.connect(lambda: self.save_mp_config(host_username=self.edt_host_user.text()))
+        self.edt_host_pass.textChanged.connect(lambda: self.save_mp_config(host_password=self.edt_host_pass.text()))
         self.chk_upnp.stateChanged.connect(lambda v: self.save_mp_config(use_upnp=self.chk_upnp.isChecked()))
         self.chk_upnp.stateChanged.connect(lambda v: self.save_mp_config(use_upnp=self.chk_upnp.isChecked()))
         
@@ -970,13 +978,13 @@ class MultiplayerTab(QWidget):
         self.lbl_local_ip = QLabel(f"Host IP: {local_ip}")
         self.lbl_local_ip.setStyleSheet("color: #3498db; font-weight: bold; margin-top: 5px;")
         self.lbl_local_ip.setAlignment(Qt.AlignCenter)
-        host_layout.addWidget(self.lbl_local_ip, 4, 0, 1, 2)
+        host_layout.addWidget(self.lbl_local_ip, 5, 0, 1, 2)
 
         # Display Public IP
         self.lbl_public_ip = QLabel("Public IP: ---")
         self.lbl_public_ip.setStyleSheet("color: #8fbc8f; font-weight: bold;")
         self.lbl_public_ip.setAlignment(Qt.AlignCenter)
-        host_layout.addWidget(self.lbl_public_ip, 5, 0, 1, 2)
+        host_layout.addWidget(self.lbl_public_ip, 6, 0, 1, 2)
 
         grp_host.setLayout(host_layout)
         layout.addWidget(grp_host)
@@ -997,10 +1005,16 @@ class MultiplayerTab(QWidget):
         self.edt_client_user = QLineEdit(self.config.get("mp_client_username", self.config.get("mp_username", "Pilot1")))
         client_layout.addWidget(self.edt_client_user, 2, 1)
 
+        client_layout.addWidget(QLabel("Password:"), 3, 0)
+        self.edt_client_pass = QLineEdit(self.config.get("mp_client_password", ""))
+        self.edt_client_pass.setEchoMode(QLineEdit.Password)
+        self.edt_client_pass.setPlaceholderText("(If Required)")
+        client_layout.addWidget(self.edt_client_pass, 3, 1)
+
         self.btn_connect = QPushButton("Connect")
         self.btn_connect.clicked.connect(self.on_connect_click)
         self.btn_connect.setStyleSheet("background-color: #2b3a41; color: #78aabc;")
-        client_layout.addWidget(self.btn_connect, 3, 0, 1, 2)
+        client_layout.addWidget(self.btn_connect, 4, 0, 1, 2)
         grp_client.setLayout(client_layout)
         layout.addWidget(grp_client)
 
@@ -1008,6 +1022,7 @@ class MultiplayerTab(QWidget):
         self.edt_client_ip.textChanged.connect(lambda: self.save_mp_config(target_ip=self.edt_client_ip.text()))
         self.spin_client_port.valueChanged.connect(lambda v: self.save_mp_config(target_port=v))
         self.edt_client_user.textChanged.connect(lambda: self.save_mp_config(client_username=self.edt_client_user.text()))
+        self.edt_client_pass.textChanged.connect(lambda: self.save_mp_config(client_password=self.edt_client_pass.text()))
 
         # Status
         self.lbl_status = QLabel("STATUS: IDLE")
@@ -1053,11 +1068,12 @@ class MultiplayerTab(QWidget):
     def start_host(self):
         port = self.spin_host_port.value()
         user = self.edt_host_user.text()
+        pwd = self.edt_host_pass.text()
         use_upnp = self.chk_upnp.isChecked()
         
-        self.save_mp_config(host_port=port, host_username=user, use_upnp=use_upnp)
+        self.save_mp_config(host_port=port, host_username=user, host_password=pwd, use_upnp=use_upnp)
         
-        payload = {"port": port, "username": user, "use_upnp": use_upnp}
+        payload = {"port": port, "username": user, "password": pwd, "use_upnp": use_upnp}
         try:
             requests.post(f"{SERVER_URL}/api/mp/host/start", json=payload, timeout=2)
             self.poll_status()
@@ -1067,24 +1083,28 @@ class MultiplayerTab(QWidget):
         ip = self.edt_client_ip.text()
         port = self.spin_client_port.value()
         user = self.edt_client_user.text()
-        self.save_mp_config(target_ip=ip, target_port=port, client_username=user)
+        pwd = self.edt_client_pass.text()
+        self.save_mp_config(target_ip=ip, target_port=port, client_username=user, client_password=pwd)
         
         payload = {
             "ip": ip, 
             "port": port, 
-            "username": user
+            "username": user,
+            "password": pwd
         }
         try:
             requests.post(f"{SERVER_URL}/api/mp/client/connect", json=payload, timeout=2)
             self.poll_status()
         except: pass
         
-    def save_mp_config(self, host_port=None, target_ip=None, target_port=None, host_username=None, client_username=None, use_upnp=None):
+    def save_mp_config(self, host_port=None, target_ip=None, target_port=None, host_username=None, client_username=None, host_password=None, client_password=None, use_upnp=None):
         if host_port: self.config["mp_host_port"] = host_port
         if target_ip: self.config["mp_target_ip"] = target_ip
         if target_port: self.config["mp_target_port"] = target_port
         if host_username: self.config["mp_host_username"] = host_username
         if client_username: self.config["mp_client_username"] = client_username
+        if host_password is not None: self.config["mp_host_password"] = host_password
+        if client_password is not None: self.config["mp_client_password"] = client_password
         if use_upnp is not None: self.config["use_upnp"] = use_upnp
         self.parent_win.config_handler.save(self.config)
 

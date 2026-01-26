@@ -29,7 +29,7 @@ class DCSHookClient:
         self.thread = threading.Thread(target=self._connector_loop)
         self.thread.daemon = True
         self.thread.start()
-        print(f"📡 TCP Connector: Started (Port {self.port})")
+        print(f"TCP Connector: Started (Port {self.port})")
 
     def stop(self):
         self.running = False
@@ -52,11 +52,11 @@ class DCSHookClient:
             self.tcp_socket.sendall(payload.encode('utf-8'))
             return True
         except Exception as e:
-            print(f"❌ TCP Send Error: {e}")
+            print(f"TCP Send Error: {e}")
             return False
 
     def _connector_loop(self):
-        print("👢 TCP Boot Mode: Attempting 3 initial connections...")
+        print("TCP Boot Mode: Attempting 3 initial connections...")
         # 1. BOOT MODE (Try to connect early)
         for i in range(3):
             if not self.running: return
@@ -67,7 +67,7 @@ class DCSHookClient:
                 sock.settimeout(None) 
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 
-                print(f"✅ Connected to DCS Hook (Boot Phase)")
+                print(f"Connected to DCS Hook (Boot Phase)")
                 self.tcp_socket = sock
                 self._read_loop(sock)
                 break # If read loop returns, we disconnected
@@ -78,7 +78,7 @@ class DCSHookClient:
                 print(f"   Boot Error: {e}")
                 time.sleep(2.0)
 
-        print("🕒 Entering Active Mode (Waiting for UDP Trigger)...")
+        print("Entering Active Mode (Waiting for UDP Trigger)...")
 
         # 2. ACTIVE MODE
         while self.running:
@@ -91,13 +91,13 @@ class DCSHookClient:
                 # UDP Stale Check
                 if time.time() - self.last_udp_time > self.udp_timeout:
                     if self.udp_alive_flag:
-                        print("⏸️ UDP Flow Lost (Timeout 5s)")
+                        print("UDP Flow Lost (Timeout 5s)")
                         self.udp_alive_flag = False
                     time.sleep(1.0)
                     continue
                     
                 # Attempt Connection
-                print("🔄 UDP Active - Connecting to Hook...")
+                print("UDP Active - Connecting to Hook...")
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(2.0)
                 
@@ -106,7 +106,7 @@ class DCSHookClient:
                     sock.settimeout(None)
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                     
-                    print(f"✅ Connected to DCS Hook (Active Phase)")
+                    print(f"Connected to DCS Hook (Active Phase)")
                     self.tcp_socket = sock
                     self._read_loop(sock) # Block here until disconnect
                     
@@ -115,7 +115,7 @@ class DCSHookClient:
                     time.sleep(1.0)
                     
             except Exception as e:
-                print(f"❌ TCP Connector Crash: {e}")
+                print(f"TCP Connector Crash: {e}")
                 time.sleep(5.0)
 
     def _read_loop(self, sock):
@@ -126,7 +126,7 @@ class DCSHookClient:
             while self.running:
                 # Activity Check
                 if time.time() - self.last_udp_time > self.udp_timeout:
-                   print("🛑 Disconnect: Activity Timeout")
+                   print("Disconnect: Activity Timeout")
                    break
                    
                 try:
@@ -135,7 +135,7 @@ class DCSHookClient:
                     if not data:
                         zero_byte_strikes += 1
                         if zero_byte_strikes >= 3:
-                            print("🛑 Disconnect: 3x Zero-Byte Reads")
+                            print("Disconnect: 3x Zero-Byte Reads")
                             break
                         time.sleep(0.1)
                         continue
@@ -156,11 +156,11 @@ class DCSHookClient:
                             pass
                             
                 except ConnectionResetError:
-                    print("🛑 Disconnect: Connection Reset")
+                    print("Disconnect: Connection Reset")
                     break
                     
         except Exception as e:
-            print(f"🛑 Disconnect Error: {e}")
+            print(f"Disconnect Error: {e}")
             
         finally:
             try:
@@ -176,19 +176,19 @@ class DCSHookClient:
              pass
         elif msg_type == "metadata":
              data = msg.get("data", {})
-             print(f"👤 Metadata: Player={data.get('player_name')}, Unit={data.get('unit_name')}")
+             print(f"Metadata: Player={data.get('player_name')}, Unit={data.get('unit_name')}")
              if self.callback_func: self.callback_func('metadata', data)
              
         elif msg_type == "phonebook":
              data = msg.get("data", {})
              count = len(data) if data else 0
-             print(f"📞 Phonebook: {count} players")
+             print(f"Phonebook: {count} players")
              if self.callback_func: self.callback_func('phonebook', data)
              
         elif msg_type == "theater_state":
              data = msg.get("data", {})
              count = len(data) if data else 0
-             print(f"🎭 Objects: {count}")
+             print(f"Objects: {count}")
              if self.callback_func: self.callback_func('theater_state', data)
              
         elif msg_type == "config":
