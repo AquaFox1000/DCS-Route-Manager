@@ -1,0 +1,2491 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>DCS Mission Planner</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        // --- GLOBAL SOCKET INIT ---
+        // Moved to HEAD to ensure it is available for all downstream scripts
+        var socket = io();
+        window.socket = socket;
+        console.log("Socket Initialized (HEAD)", socket);
+
+        // --- REFRESH LOGIC ---
+        var currentBootId = null;
+
+        socket.on('server_handshake', function (data) {
+            console.log("Health Check:", data);
+            if (data && data.boot_id) {
+                if (currentBootId === null) {
+                    currentBootId = data.boot_id;
+                    console.log("Boot ID set:", currentBootId);
+                } else if (currentBootId !== data.boot_id) {
+                    console.log("Server Restart detected. Reloading...");
+                    window.location.reload();
+                }
+            }
+        });
+
+        socket.on('refresh', function () {
+            console.log("Manual Refresh Triggered");
+            window.location.reload();
+        });
+    </script>
+
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.vectorgrid@latest/dist/Leaflet.VectorGrid.bundled.js"></script>
+    <script src="https://unpkg.com/@joergdietrich/leaflet.terminator/L.Terminator.js"></script>
+    <script src="https://unpkg.com/milsymbol@2.0.0/dist/milsymbol.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+    <style>
+        /* --- DYNAMIC MAP FILTERS --- */
+        /* These variables will be updated by JS per map type */
+        .leaflet-tile-pane {
+            filter: brightness(var(--map-br, 1.0)) contrast(var(--map-con, 1.0)) opacity(var(--map-op, 1.0)) !important;
+        }
+
+        /* Inverted Mode for Light Maps -> Dark */
+        .invert-map {
+            filter: invert(100%) hue-rotate(180deg) brightness(var(--map-br, 1.0)) contrast(var(--map-con, 1.0)) opacity(var(--map-op, 1.0)) !important;
+        }
+
+        /* TACTICAL OVERLAY STYLES */
+        .tactical-overlay {
+            filter: grayscale(100%) invert(100%) opacity(0.6) brightness(0.8) !important;
+        }
+
+        /* White Lines on Transparent BG (Inverts Black on Transparent) */
+        .invert-overlay {
+            filter: invert(100%) opacity(0.8) !important;
+        }
+
+        /* Roads: Invert (Black->White) + Screen (Remove Black BG) = Light Grey Lines */
+        .road-overlay {
+            filter: invert(100%);
+            mix-blend-mode: screen !important;
+            opacity: 0.6 !important;
+        }
+
+        /* --- DYNAMIC NVG MODES --- */
+        body.nvg-red {
+            filter: sepia(var(--nvg-sepia)) hue-rotate(var(--nvg-hue)) saturate(var(--nvg-saturate)) contrast(var(--nvg-con)) brightness(var(--nvg-br)) !important;
+        }
+
+        body.nvg-green {
+            filter: sepia(var(--nvg-sepia)) hue-rotate(var(--nvg-hue)) saturate(var(--nvg-saturate)) contrast(var(--nvg-con)) brightness(var(--nvg-br)) !important;
+        }
+
+        /* --- CORE STYLES --- */
+
+        :root {
+            --bg-dark: #151d21;
+            --bg-panel: #2b3a41;
+            --bg-hover: #4a6069;
+            --text-main: #d1e3ea;
+            --accent: #78aabc;
+            --red-for: #e74c3c;
+            --active-leg: #00ff00;
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg-dark);
+            font-family: 'Segoe UI', sans-serif;
+            overflow: hidden;
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+            width: 100vw;
+            height: 100vh;
+            height: 100dvh;
+            font-size: var(--font-size-base);
+            touch-action: none;
+        }
+
+        #map-wrapper {
+            flex-grow: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            background: var(--bg-dark);
+        }
+
+        /* HUD OVERLAY */
+        #hud-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1000;
+            pointer-events: none;
+            border: none;
+            display: none;
+            background: transparent !important;
+        }
+
+        #hud-overlay.visible {
+            display: block;
+        }
+
+        /* VIRTUAL CURSOR CONTAINER */
+        #virtual-cursor {
+            pointer-events: none;
+            z-index: 9999;
+            width: 32px;
+            height: 32px;
+            position: fixed;
+            display: none;
+            border: none !important;
+            outline: none !important;
+            box-shadow: none !important;
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+
+        /* BOTTOM STATUS BAR */
+        #bottom-bar {
+            min-height: calc(30px * var(--ui-scale));
+            background: #0f1518;
+            border-top: 1px solid #444;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 calc(15px * var(--ui-scale));
+            font-family: 'Consolas', monospace;
+            font-size: var(--font-size-base);
+            font-weight: bold;
+            z-index: 3000;
+        }
+
+        .bar-section {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .bar-item {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            color: #888;
+        }
+
+        .bar-val {
+            color: var(--accent);
+        }
+
+        .bar-item i {
+            font-size: 11px;
+        }
+
+        /* Sidebar Visibility Logic */
+        .info-pill {
+            display: none;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .info-pill.visible {
+            display: flex;
+        }
+
+        /* SIDEBARS */
+        .sidebar {
+            position: absolute;
+            top: 0;
+            bottom: var(--bottom-bar-height);
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 10px;
+            pointer-events: auto;
+            overflow-y: auto;
+            width: fit-content;
+            justify-content: center;
+        }
+
+        .sidebar>* {
+            pointer-events: auto;
+        }
+
+        #sidebar-left {
+            left: 0;
+            padding-bottom: calc(var(--btn-size) + 5px);
+        }
+
+        #sidebar-right {
+            right: 0;
+            align-items: flex-end;
+        }
+
+        .sidebar.hidden-left {
+            transform: translateX(-150%);
+        }
+
+        .sidebar.hidden-right {
+            transform: translateX(150%);
+        }
+
+        /* LAYOUT MENU */
+        #layout-menu {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 2500;
+        }
+
+        #layout-dropdown {
+            position: absolute;
+            top: 40px;
+            left: 0;
+            background: var(--bg-panel);
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 5px;
+            display: none;
+            flex-direction: column;
+            gap: 5px;
+            min-width: 100px;
+        }
+
+        #layout-menu:hover #layout-dropdown {
+            display: flex;
+        }
+
+        .chk-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            padding: 4px;
+        }
+
+        .chk-row:hover {
+            background: var(--bg-hover);
+        }
+
+        /* BUTTONS */
+        .btn-square {
+            width: var(--btn-size);
+            height: var(--btn-size);
+            min-width: var(--btn-size);
+            min-height: var(--btn-size);
+            flex-shrink: 0;
+            background-color: var(--bg-panel);
+            color: var(--text-main);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.4);
+            position: relative;
+            font-size: calc(16px * var(--ui-scale));
+        }
+
+        .btn-square:hover {
+            background-color: var(--bg-hover);
+            transform: scale(1.05);
+            z-index: 2001;
+        }
+
+        .btn-square.active {
+            border: 2px solid var(--accent);
+            color: var(--accent);
+            background: rgba(120, 170, 188, 0.2);
+        }
+
+        /* --- DRAG & DROP STYLES --- */
+        .draggable-row {
+            cursor: grab;
+        }
+
+        .draggable-row.dragging {
+            opacity: 0.5;
+            background: var(--bg-hover) !important;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .drag-handle {
+            cursor: grab;
+            color: #777;
+            padding: 0 5px;
+        }
+
+        .drag-handle:hover {
+            color: #fff;
+        }
+
+        /* DRAWERS */
+        .drawer-panel {
+            position: absolute;
+            left: 70px;
+            top: 10px;
+            bottom: calc(var(--bottom-bar-height) + 10px);
+            width: min(380px, calc(100vw - 90px));
+            background: rgba(21, 29, 33, 0.95);
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 15px;
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 1500;
+            overflow-y: auto;
+        }
+
+        .drawer-panel.open {
+            display: flex;
+        }
+
+        .panel-header {
+            font-size: 18px;
+            font-weight: bold;
+            border-bottom: 1px solid var(--accent);
+            padding-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .route-view {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            height: 100%;
+        }
+
+        /* --- UPDATED LIST STYLES (FLEXBOX) --- */
+        .saved-route-item,
+        .route-item {
+            display: flex;
+            /* Flexbox fixes the "gap" and alignment */
+            align-items: center;
+            gap: 8px;
+            /* Consistent spacing */
+            padding: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            border-left: 3px solid transparent;
+            transition: background 0.2s, transform 0.1s;
+            /* Adds subtle feel */
+            cursor: grab;
+            margin-bottom: 4px;
+        }
+
+        /* CRUCIAL: Prevents children from breaking the drag detection */
+        .saved-route-item>*,
+        .route-item>* {
+            pointer-events: none;
+        }
+
+        /* Re-enable clicks for buttons/inputs */
+        .saved-route-item button,
+        .saved-route-item input,
+        .saved-route-item select,
+        .route-item button,
+        .route-item input,
+        .route-item select {
+            pointer-events: auto;
+        }
+
+        .saved-route-item:hover,
+        .route-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .saved-route-item.is-active {
+            background: rgba(46, 204, 113, 0.15);
+            border-left-color: #2ecc71;
+        }
+
+        /* Visual feedback when dragging */
+        .saved-route-item.dragging,
+        .route-item.dragging {
+            opacity: 0.5;
+            background: #000;
+            border: 1px dashed #555;
+        }
+
+        .list-btn {
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 30px;
+        }
+
+        .list-btn:hover {
+            color: #fff;
+        }
+
+        .list-btn.active {
+            color: var(--accent);
+        }
+
+        .list-btn.delete:hover {
+            color: var(--red-for);
+        }
+
+        input.color-picker-mini {
+            width: 25px;
+            height: 25px;
+            border: none;
+            padding: 0;
+            background: none;
+            cursor: pointer;
+        }
+
+        .seq-toggle-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #111;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #444;
+        }
+
+        .seq-status {
+            font-weight: bold;
+            color: #555;
+        }
+
+        .seq-status.on {
+            color: #0f0;
+            text-shadow: 0 0 5px #0f0;
+        }
+
+        .route-list-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .route-footer {
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            text-align: center;
+            font-weight: bold;
+            font-family: 'Consolas';
+            border-top: 1px solid #555;
+        }
+
+        .form-row {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            margin-bottom: 3px;
+        }
+
+        label {
+            font-size: 11px;
+            color: #aaa;
+            text-transform: uppercase;
+        }
+
+        input,
+        select {
+            background: #111;
+            border: 1px solid #555;
+            color: #fff;
+            padding: 8px;
+            border-radius: 4px;
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 5px;
+        }
+
+        /* THREAT RINGS UI */
+        .threat-row {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            margin-top: 5px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .threat-input-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .threat-input-group label {
+            width: 80px;
+            font-size: 10px;
+            color: #aaa;
+            text-transform: uppercase;
+        }
+
+        .threat-input-group input[type="number"] {
+            flex-grow: 1;
+            height: 25px;
+            padding: 2px 5px;
+            background: #111;
+            border: 1px solid #555;
+            color: #fff;
+        }
+
+        .threat-input-group input[type="checkbox"] {
+            margin: 0;
+            cursor: pointer;
+        }
+
+        /* TACTICAL BUTTONS */
+        .btn-full {
+            background-color: var(--bg-panel);
+            color: var(--text-main);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+            font-weight: bold;
+            font-family: 'Consolas', monospace;
+            text-transform: uppercase;
+            font-size: 12px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-full:hover {
+            background-color: var(--bg-hover);
+            border-color: var(--accent);
+            color: #fff;
+            box-shadow: 0 0 8px rgba(120, 170, 188, 0.3);
+        }
+
+        /* Button Variants */
+        .btn-action {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .btn-action:hover {
+            background-color: rgba(120, 170, 188, 0.15);
+        }
+
+        .btn-alert {
+            border-color: #e67e22;
+            color: #e67e22;
+        }
+
+        .btn-alert:hover {
+            background-color: rgba(230, 126, 34, 0.15);
+            border-color: #e67e22;
+            box-shadow: 0 0 8px rgba(230, 126, 34, 0.3);
+        }
+
+        .btn-success {
+            border-color: var(--active-leg);
+            color: var(--active-leg);
+        }
+
+        .btn-success:hover {
+            background-color: rgba(0, 255, 0, 0.1);
+            border-color: var(--active-leg);
+            box-shadow: 0 0 8px rgba(0, 255, 0, 0.3);
+        }
+
+        .btn-danger {
+            border-color: var(--red-for);
+            color: var(--red-for);
+        }
+
+        .btn-danger:hover {
+            background-color: rgba(231, 76, 60, 0.15);
+            border-color: var(--red-for);
+            box-shadow: 0 0 8px rgba(231, 76, 60, 0.3);
+        }
+
+        .btn-full:hover {
+            background: var(--accent);
+        }
+
+        /* --- MILITARY TOGGLES --- */
+        .mil-toggle {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px dashed #555;
+            color: #555;
+            padding: 8px;
+            text-align: center;
+            font-family: 'Consolas', monospace;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .mil-toggle:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: #777;
+            color: #777;
+        }
+
+        /* Active States */
+        /* --- VIRTUAL POINTER --- */
+        #virtual-cursor {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 20px;
+            height: 20px;
+            background: rgba(255, 0, 0, 0.7);
+            border: 2px solid white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            /* Center it */
+            pointer-events: none;
+            /* Let clicks pass through if we use elementFromPoint */
+            z-index: 9999;
+            display: none;
+            box-shadow: 0 0 10px rgba(255, 0, 0, 0.8);
+            transition: transform 0.05s linear;
+        }
+
+        .mil-toggle.active.red {
+            background: rgba(231, 76, 60, 0.15);
+            border: 1px solid #e74c3c;
+            color: #e74c3c;
+            box-shadow: 0 0 5px rgba(231, 76, 60, 0.2);
+        }
+
+        .mil-toggle.active.blue {
+            background: rgba(52, 152, 219, 0.15);
+            border: 1px solid #3498db;
+            color: #3498db;
+            box-shadow: 0 0 5px rgba(52, 152, 219, 0.2);
+        }
+
+        .mil-toggle.active.neutral {
+            background: rgba(180, 180, 180, 0.15);
+            border: 1px solid #aaa;
+            color: #aaa;
+            box-shadow: 0 0 5px rgba(180, 180, 180, 0.2);
+        }
+
+        .mil-toggle.active:hover {
+            filter: brightness(1.2);
+        }
+
+        #toast {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--accent);
+            color: #000;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-weight: bold;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s;
+            z-index: 3000;
+        }
+
+        #toast.show {
+            opacity: 1;
+        }
+
+        /* MINI ROUTE PANEL */
+        #mini-route-panel {
+            position: absolute;
+            top: 10px;
+            left: 70px;
+            z-index: 1500;
+            background: rgba(21, 29, 33, 0.95);
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            padding: 10px;
+            display: none;
+            gap: 10px;
+            align-items: center;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        #mini-route-panel.visible {
+            display: flex;
+        }
+
+        .mini-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .mini-title {
+            font-size: 10px;
+            color: #aaa;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+
+        .mini-val {
+            font-size: 14px;
+            color: #fff;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        .mini-btn {
+            background: var(--bg-panel);
+            border: 1px solid #555;
+            color: #fff;
+            width: 30px;
+            height: 30px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .mini-btn:hover {
+            background: var(--bg-hover);
+            border-color: var(--accent);
+        }
+
+        /* USER PLANE CONTAINER */
+        .jet-container {
+            transition: transform 0.1s linear;
+        }
+
+        /* MEASURE TOOL STYLES (Clean/Dark) */
+        .measure-label,
+        .bearing-label {
+            background: rgba(21, 29, 33, 0.9);
+            color: #d1e3ea;
+            border: 1px solid var(--accent);
+            padding: 2px 6px;
+            font-size: 11px;
+            font-family: 'Consolas', monospace;
+            font-weight: bold;
+            white-space: nowrap;
+            border-radius: 3px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        .unit-badge {
+            color: #888;
+            font-size: 10px;
+            padding: 0 5px;
+            display: flex;
+            align-items: center;
+            background: #222;
+            border: 1px solid #555;
+            border-left: none;
+            border-radius: 0 4px 4px 0;
+            min-width: 25px;
+            justify-content: center;
+        }
+
+        /* --- SCRATCHPAD (Scratchpad) --- */
+        #scratchpad-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1900;
+            pointer-events: none;
+            display: none;
+            overflow: hidden;
+        }
+
+        #scratchpad-canvas {
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+
+        /* MODES */
+        #scratchpad-layer.mode-active {
+            display: block;
+            pointer-events: auto;
+            cursor: crosshair;
+        }
+
+        #scratchpad-layer.mode-passive {
+            display: block;
+            pointer-events: none;
+        }
+
+        #scratchpad-layer.cursor-text {
+            cursor: text;
+            pointer-events: auto !important;
+        }
+
+        /* SUB-SIDEBAR (Toolbox) */
+        #sp-sub-sidebar {
+            position: absolute;
+            right: 65px;
+            /* Aligned left of the 50px sidebar */
+            /* Dynamic Bottom Calculation */
+            bottom: calc(var(--bottom-bar-height) + 60px);
+            width: 45px;
+            display: none;
+            flex-direction: column-reverse;
+            /* Stack grows UPWARDS */
+            gap: 5px;
+            pointer-events: auto;
+            z-index: 2100;
+            align-items: center;
+        }
+
+        /* Hide tool items by default so we don't need inline styles */
+        .sp-tool-item {
+            display: none;
+        }
+
+        #sp-sub-sidebar.visible {
+            display: flex;
+        }
+
+        #sp-sub-sidebar.expanded .sp-tool-item {
+            display: block;
+        }
+
+        /* Tool Button Tweaks */
+        #sp-sub-sidebar .btn-square {
+            width: 40px;
+            height: 40px;
+            min-width: 40px;
+            min-height: 40px;
+            font-size: 14px;
+            margin-bottom: 0;
+        }
+
+        /* POPOUTS */
+        .sp-tool-wrapper {
+            position: relative;
+        }
+
+        .sp-popout {
+            position: absolute;
+            right: 50px;
+            top: 0;
+            background: var(--bg-panel);
+            border: 1px solid var(--accent);
+            padding: 10px;
+            border-radius: 8px;
+            display: none;
+            flex-direction: column;
+            gap: 5px;
+            min-width: 140px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.9);
+        }
+
+        .sp-popout.show {
+            display: flex;
+        }
+
+        .sp-popout label {
+            font-size: 10px;
+            color: #aaa;
+            text-transform: uppercase;
+            margin-bottom: 2px;
+            display: block;
+        }
+
+
+
+        /* COLOR DOTS */
+        .color-dot {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+        }
+
+        .color-dot:hover {
+            transform: scale(1.1);
+            border-color: #fff;
+        }
+
+        /* IN-PLACE TEXT INPUT CLOUD */
+        #sp-text-input-box {
+            position: absolute;
+            background: var(--bg-panel);
+            border: 1px solid var(--accent);
+            padding: 8px;
+            border-radius: 20px 20px 20px 0;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.8);
+            z-index: 2500;
+            display: flex;
+            gap: 5px;
+            align-items: center;
+            pointer-events: auto;
+        }
+
+        #sp-text-input {
+            background: #151d21;
+            border: none;
+            color: #fff;
+            border-radius: 4px;
+            padding: 8px;
+            outline: none;
+            min-width: 150px;
+        }
+
+        #sp-text-input-box button {
+            background: var(--accent);
+            border: none;
+            border-radius: 4px;
+            width: 30px;
+            height: 30px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #000;
+            font-size: 14px;
+        }
+
+        /* ACTIVE STATES */
+        .btn-square.sp-tool-active {
+            border-color: var(--accent);
+            background: rgba(120, 170, 188, 0.2);
+            color: var(--accent);
+            box-shadow: 0 0 8px var(--accent);
+        }
+
+        .btn-square.sp-active-glow {
+            border-color: #2ecc71;
+            color: #2ecc71;
+            box-shadow: 0 0 10px rgba(46, 204, 113, 0.5);
+            text-shadow: 0 0 5px #2ecc71;
+            animation: pulse-green 2s infinite;
+        }
+
+        .btn-square.sp-passive-eye {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(120, 170, 188, 0.1);
+        }
+
+        /* --- 1. FIXED SCRATCHPAD LABEL (Teal & Tactical) --- */
+        #sp-text-cursor {
+            /* Position fixed to float above the bottom bar */
+            position: fixed;
+            bottom: 4px;
+            /* Vertically centered in the ~30px bottom bar */
+            left: 50%;
+            /* Horizontal Center */
+            transform: translateX(-50%);
+            /* Center alignment correction */
+
+            /* Teal Theme Colors matching the bar aesthetics */
+            background: rgba(15, 21, 24, 0.95);
+            /* Matches bottom-bar #0f1518 */
+            border: 1px solid var(--accent);
+            color: var(--accent);
+
+            /* Typography */
+            font-family: 'Consolas', monospace;
+            font-size: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            white-space: nowrap;
+
+            /* Shape */
+            padding: 2px 5px;
+            border-radius: 4px;
+            /* High Z-Index to ensure it sits ON TOP of the bottom bar (z-3000) */
+            z-index: 3500;
+            display: none;
+            pointer-events: none;
+            /* Let clicks pass through to the bar if needed */
+        }
+
+        /* Only visible in active mode */
+        #scratchpad-layer.mode-active #sp-text-cursor {
+            display: block;
+        }
+
+        /* --- 2. FIX SIDEBAR ICON SIZES --- */
+        /* Forces all main sidebar icons to be consistent size */
+        .sidebar .btn-square {
+            font-size: 18px !important;
+            /* Forces consistent icon size */
+        }
+
+        /* --- 3. FIX SUB-SIDEBAR (Toolbox) ALIGNMENT --- */
+        #sp-sub-sidebar .btn-square {
+            width: 40px;
+            height: 40px;
+            min-width: 40px;
+            min-height: 40px;
+            font-size: 14px !important;
+            /* Tools are slightly smaller */
+            margin-bottom: 0;
+
+            /* Perfect Centering Fix */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+        }
+
+        /* Fix for the Trash Icon specifically if it feels off-center */
+        #sp-sub-sidebar .fa-trash {
+            transform: translateY(0px);
+            /* Adjust if visual weight is still off */
+        }
+
+        /* --- POPUP MENU - UPDATED FOR LAYERS --- */
+        .popup-menu {
+            position: fixed;
+            /* Changed from absolute */
+            /* Remove 'right: 115%' and 'top: 0' - JS will handle this */
+            background: var(--bg-panel);
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            padding: 5px;
+            display: none;
+            flex-direction: column;
+            gap: 5px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+            min-width: 160px;
+            max-height: 80vh;
+            overflow-y: auto;
+            z-index: 6000;
+            /* Ensure it's on top of sidebar (2000) and toast (3000) */
+        }
+
+        .popup-menu.show {
+            display: flex;
+        }
+
+        .menu-item {
+            background: transparent;
+            border: none;
+            color: var(--text-main);
+            text-align: left;
+            padding: 8px;
+            cursor: pointer;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .menu-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .menu-item.active {
+            background: rgba(120, 170, 188, 0.2);
+            border-left: 2px solid var(--accent);
+        }
+
+        .overlay-chk {
+            pointer-events: none;
+            width: 14px;
+            height: 14px;
+        }
+
+        /* Data Cartridge  MODALS */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 5000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(2px);
+        }
+
+        .modal-box {
+            background: var(--bg-panel);
+            border: 1px solid var(--accent);
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+            border-radius: 8px;
+            padding: 20px;
+            color: #fff;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .modal-header {
+            font-size: 18px;
+            font-weight: bold;
+            border-bottom: 1px solid #444;
+            padding-bottom: 10px;
+            color: var(--accent);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .modal-section {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+
+        .modal-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #aaa;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        #qr-output {
+            background: #fff;
+            padding: 10px;
+            align-self: center;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+
+        #reader {
+            width: 100%;
+            border: 1px solid #444;
+            background: #000;
+        }
+
+        .chk-list {
+            max-height: 150px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .chk-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 5px;
+            background: rgba(255, 255, 255, 0.05);
+            cursor: pointer;
+        }
+
+        .chk-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .chk-item input {
+            margin: 0;
+            cursor: pointer;
+        }
+
+        /* TACTICAL DROP ZONE */
+        .drop-zone {
+            border: 2px dashed #444;
+            border-radius: 6px;
+            padding: 25px;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.2);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #777;
+            margin-top: 10px;
+        }
+
+        .drop-zone:hover {
+            border-color: var(--accent);
+            background: rgba(120, 170, 188, 0.05);
+            color: var(--accent);
+        }
+
+        .drop-zone.dragover {
+            border-color: #e67e22;
+            /* Amber for active drag */
+            background: rgba(230, 126, 34, 0.1);
+            color: #e67e22;
+        }
+
+        .drop-zone i {
+            font-size: 24px;
+            margin-bottom: 10px;
+            transition: color 0.2s;
+        }
+
+        /* CAMERA VIEWPORT */
+        .camera-viewport {
+            width: 100%;
+            background: #000;
+            border: 1px solid #444;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+            min-height: 250px;
+        }
+
+        /* CAMERA VIDEO STYLING */
+        #reader video {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+
+        /* AIRPORT LABELS */
+        .airport-label {
+            background: rgba(0, 0, 0, 0.7);
+            border: none;
+            color: #bbb;
+            font-weight: bold;
+            font-family: 'Consolas';
+            font-size: 10px;
+            box-shadow: none;
+        }
+
+        /* VIRTUAL KEYBOARD */
+        #virtual-keyboard {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #2b3a41;
+            border: 1px solid #78aabc;
+            border-radius: 8px;
+            padding: 10px;
+            z-index: 9999;
+            display: none;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.8);
+            flex-direction: column;
+            gap: 5px;
+            min-width: 250px;
+        }
+
+        #virtual-keyboard.visible {
+            display: flex;
+        }
+
+        .kb-row {
+            display: flex;
+            justify-content: center;
+            gap: 5px;
+        }
+
+        .kb-key {
+            background: #151d21;
+            color: #fff;
+            border: 1px solid #444;
+            border-radius: 4px;
+            min-width: 30px;
+            height: 35px;
+            cursor: pointer;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .kb-key:hover {
+            background: #78aabc;
+            color: #000;
+        }
+
+        .kb-key.wide {
+            flex-grow: 1;
+        }
+
+        .kb-key.action {
+            background: #3a2b2b;
+            color: #e74c3c;
+        }
+
+        .kb-key.enter {
+            background: #2b3a2b;
+            color: #2ecc71;
+        }
+
+        .input-with-kb {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            width: 100%;
+        }
+
+        .input-with-kb input {
+            flex-grow: 1;
+        }
+
+        .kb-trigger {
+            color: #78aabc;
+            cursor: pointer;
+            padding: 5px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #111;
+        }
+
+        .kb-trigger:hover {
+            background: #333;
+        }
+
+        /* ICON GRID FOR POI */
+        .icon-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr) !important;
+            /* 5 Columns */
+            gap: 3px;
+            margin-top: 5px;
+        }
+
+        .icon-opt {
+            background: #4d6875;
+            border: 1px solid #555;
+            color: #bbb;
+            height: 40px;
+            /* Compact height */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 10px;
+            /* Smaller text */
+            font-weight: bold;
+            line-height: 1.1;
+            text-transform: uppercase;
+            padding: 1px;
+            transition: all 0.1s ease;
+        }
+
+        .icon-opt canvas {
+            max-height: 38px !important;
+            /* Ensure symbol fits */
+            width: auto !important;
+            margin-bottom: -2px;
+        }
+
+        .icon-opt:hover {
+            border-color: #fff;
+            color: #fff;
+        }
+
+        .icon-opt.selected {
+            background: var(--bg-hover);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* --- CORE STYLES --- */
+        :root {
+            --bg-dark: #151d21;
+            --bg-panel: #2b3a41;
+            --bg-hover: #4a6069;
+            --text-main: #d1e3ea;
+            --accent: #78aabc;
+            --red-for: #e74c3c;
+            --active-leg: #00ff00;
+
+            /* UI SCALING */
+            --bottom-bar-height: calc(30px * var(--ui-scale));
+            --ui-scale: 1.0;
+            /* Default scale */
+            --btn-size: calc(45px * var(--ui-scale));
+            --font-size-base: calc(13px * var(--ui-scale));
+
+            /* GRID COLORS (Defaults) */
+            --mgrs-color: #733f59;
+            --mgrs-gzd-color: #988035;
+            --latlon-color: #00ffcc;
+            /* NEW VARIABLE */
+
+            --mgrs-text-stroke: 1px 0 0 #000, -1px 0 0 #000, 0 1px 0 #000, 0 -1px 0 #000;
+        }
+
+        /* MGRS RULER STYLES */
+        /* 1. MOVE LAYOUT MENU TO BOTTOM LEFT */
+        #layout-menu {
+            position: absolute;
+            bottom: calc(var(--bottom-bar-height) + 10px);
+            left: 10px;
+            top: auto;
+            /* Clear top positioning */
+            z-index: 2500;
+        }
+
+        #layout-dropdown {
+            top: auto;
+            bottom: 100%;
+            /* Open upwards */
+            margin-bottom: 5px;
+        }
+
+        /* --- MGRS GRID STYLES --- */
+        :root {
+            --latlon-color: #00ffcc;
+            --mgrs-color: #733f59;
+            --mgrs-gzd-color: #988035;
+            --mgrs-text-stroke: 1px 0 0 #000, -1px 0 0 #000, 0 1px 0 #000, 0 -1px 0 #000;
+        }
+
+        .grid-text {
+            color: var(--latlon-color);
+            font-family: Consolas;
+            font-size: 10px;
+            text-shadow: 1px 1px 0 #000;
+        }
+
+        .grid-line {
+            stroke: var(--latlon-color);
+            stroke-width: 1;
+            stroke-opacity: 0.5;
+            stroke-dasharray: 4, 4;
+            fill: none;
+        }
+
+        .mgrs-line-base {
+            fill: none;
+            stroke-linecap: square;
+            stroke-dasharray: 4, 6;
+        }
+
+        .mgrs-line-gzd-high {
+            stroke: var(--mgrs-gzd-color);
+            stroke-width: 1.75;
+            stroke-opacity: 1.0;
+        }
+
+        .mgrs-line-gzd-low {
+            stroke: var(--mgrs-gzd-color);
+            stroke-width: 1;
+            stroke-opacity: 0.7;
+        }
+
+        .mgrs-line-high {
+            stroke: var(--mgrs-color);
+            stroke-width: 1.75;
+            stroke-opacity: 1.0;
+        }
+
+        .mgrs-line-low {
+            stroke: var(--mgrs-color);
+            stroke-width: 1;
+            stroke-opacity: 0.6;
+        }
+
+        /* --- VIRTUAL POINTER --- */
+        #virtual-cursor {
+            width: 32px;
+            height: 32px;
+            position: fixed;
+            z-index: 10000;
+            pointer-events: none;
+            display: none;
+            /* Crosshair SVG - Default overwritten by JS */
+            background: none;
+            background-repeat: no-repeat;
+            /* Center Hotspot handled via transform logic */
+            transition: transform 0.05s linear;
+        }
+
+        /* Removed pseudo-element ::after as we use SVG */
+
+        .pointer-click-anim {
+            position: fixed;
+            width: 40px;
+            height: 40px;
+            border: 2px solid #00ff00;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            animation: ping 0.5s ease-out forwards;
+            pointer-events: none;
+            z-index: 9998;
+        }
+
+        @keyframes ping {
+            0% {
+                transform: translate(-50%, -50%) scale(0.5);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translate(-50%, -50%) scale(2.0);
+                opacity: 0;
+            }
+        }
+
+        /* LABELS */
+        .mgrs-label-gzd-corner {
+            font-family: 'Consolas', monospace;
+            font-weight: bold;
+            font-size: 16px;
+            color: var(--mgrs-gzd-color);
+            text-shadow: 2px 2px 0 #000;
+            pointer-events: none;
+        }
+
+        .mgrs-label-gzd-axis {
+            color: var(--mgrs-gzd-color);
+            font-family: 'Consolas', monospace;
+            font-weight: bold;
+            font-size: 14px;
+            text-shadow: 1px 1px 0 #000;
+            pointer-events: none;
+        }
+
+        .mgrs-label-center {
+            font-family: 'Consolas', monospace;
+            font-weight: bold;
+            font-size: 14px;
+            color: var(--mgrs-color);
+            opacity: 0.9;
+            text-shadow: var(--mgrs-text-stroke);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none;
+        }
+
+        .mgrs-label-edge-header {
+            font-family: 'Consolas', monospace;
+            font-weight: bold;
+            font-size: 16px;
+            color: var(--mgrs-color);
+            text-shadow: 0 0 4px #000, 0 0 8px var(--mgrs-color);
+            pointer-events: none;
+        }
+
+        .mgrs-label-digit {
+            color: var(--mgrs-color);
+            font-family: 'Consolas', monospace;
+            font-weight: bold;
+            font-size: 14px;
+            text-shadow: 1px 1px 0 #000;
+            pointer-events: none;
+        }
+
+        /* --- SETTINGS DRAWER UTILS --- */
+        .sub-setting-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            margin-left: 15px;
+            border-left: 2px solid #333;
+            padding-left: 10px;
+            margin-top: 5px;
+        }
+
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chk-label-icon {
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="toast">Route Saved</div>
+    <div id="virtual-cursor"></div>
+
+    <div id="layout-menu">
+        <div class="btn-square" title="Layout Options"><i class="fa-solid fa-eye"></i></div>
+        <div id="layout-dropdown">
+            <div class="chk-row" onclick="toggleSidebar('left')"><i class="fa-solid fa-square-check" id="chk-left"></i>
+                Left Panel</div>
+            <div class="chk-row" onclick="toggleSidebar('right')"><i class="fa-solid fa-square-check"
+                    id="chk-right"></i> Right Panel</div>
+        </div>
+    </div>
+
+    <div id="map-wrapper">
+        <div id="map"></div>
+        <iframe id="hud-overlay" src="about:blank"></iframe>
+    </div>
+
+    <div id="bottom-bar">
+        <div class="bar-section">
+            <div class="bar-item"><i class="fa-solid fa-crosshairs"></i> <span class="bar-val" id="val-cursor">--</span>
+            </div>
+        </div>
+        <div class="bar-section">
+            <div class="info-pill visible" id="pill-alt"><span class="bar-item" style="font-size:10px;">ALT</span> <span
+                    class="bar-val" id="val-alt">0000</span></div>
+            <div class="info-pill visible" id="pill-hdg"><span class="bar-item" style="font-size:10px;">HDG</span> <span
+                    class="bar-val" id="val-hdg">360</span></div>
+        </div>
+    </div>
+
+    <div id="mini-route-panel">
+        <div class="mini-info"><span class="mini-title">Active Route</span><span class="mini-val"
+                id="mini-route-name">ALPHA-1</span></div>
+        <div style="width:1px; height:30px; background:#555;"></div>
+        <div class="mini-info"><span class="mini-title">Tracking</span><span class="mini-val" id="mini-wp-name">WP
+                1</span></div>
+        <button class="mini-btn" onclick="cycleWp(-1)" title="Prev WP"><i class="fa-solid fa-chevron-left"></i></button>
+        <button class="mini-btn" onclick="cycleWp(1)" title="Next WP"><i class="fa-solid fa-chevron-right"></i></button>
+        <div style="width:1px; height:30px; background:#555;"></div>
+        <button class="mini-btn" onclick="stopRoute()" title="Stop/Edit"><i class="fa-solid fa-stop"></i></button>
+    </div>
+
+    <div class="sidebar" id="sidebar-left">
+        <div class="btn-square" id="btn-route-menu" onclick="toggleDrawer('route')" title="Route Manager"><i
+                class="fa-solid fa-route"></i></div>
+        <div class="btn-square" id="btn-poi-list" onclick="toggleDrawer('poi')" title="Visual Targets List"><i
+                class="fa-solid fa-list-ul"></i></div>
+        <div class="btn-square" id="btn-mode-poi" onclick="setClickMode('poi')" title="Drop POI Marker"><i
+                class="fa-solid fa-thumbtack"></i></div>
+        <div class="btn-square" onclick="markCurrentPosition()" title="Mark My Position"><i
+                class="fa-solid fa-map-location-dot"></i></div>
+        <div style="height:10px;"></div>
+        <div class="btn-square" id="btn-settings" onclick="toggleDrawer('settings')" title="Settings & Options"><i
+                class="fa-solid fa-gear"></i></div>
+    </div>
+
+    <div id="settings-drawer" class="drawer-panel">
+        <div class="panel-header">Options</div>
+        <div class="form-row"><label>Coordinates Format</label><select id="opt-coords" onchange="updateSettings()">
+                <option value="latlon">Lat/Lon (DMS)</option>
+                <option value="mgrs">MGRS</option>
+            </select></div>
+        <div class="form-row"><label>Altitude Units</label><select id="opt-alt-unit" onchange="updateSettings()">
+                <option value="ft">Feet (ft)</option>
+                <option value="m">Meters (m)</option>
+            </select></div>
+        <div class="form-row"><label>Distance Units</label><select id="opt-dist-unit" onchange="updateSettings()">
+                <option value="nm">Nautical Miles (nm)</option>
+                <option value="km">Kilometers (km)</option>
+            </select></div>
+        <div class="form-row"><label>Default Waypoint Altitude</label>
+            <div class="input-group">
+                <div class="input-with-kb">
+                    <input type="number" id="opt-def-alt" value="20000"
+                        style="width: 100%; border-radius: 4px 0 0 4px;">
+                    <div class="kb-trigger" onclick="openKeyboard('opt-def-alt', 'number')">123</div>
+                </div>
+                <div class="unit-badge" id="lbl-def-alt-unit">ft</div>
+            </div>
+        </div>
+
+        <div class="form-row" style="margin-top:10px;">
+            <label>Navigation Logic</label>
+            <div style="border-top:1px solid #444; margin:2px 0;"></div>
+            <div
+                style="display:flex; flex-direction:column; gap:5px; background:#111; padding:5px; border:1px solid #555; border-radius:4px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#78aabc; font-size:12px; font-weight:bold;">Auto Sequence Routes</span>
+                    <input type="checkbox" id="chk-opt-autoseq" checked onchange="toggleSeq()"
+                        style="width:16px; height:16px; cursor:pointer;">
+                </div>
+                <div style="border-top:1px solid #444; margin:2px 0;"></div>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#78aabc; font-size:12px; font-weight:bold;">Enable "Fly-By" Turns</span>
+                    <input type="checkbox" id="chk-opt-flyby" onchange="saveMapSettings()"
+                        style="width:16px; height:16px; cursor:pointer;">
+                </div>
+                <div style="border-top:1px solid #444; margin:2px 0;"></div>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#78aabc; font-size:12px; font-weight:bold;">Course Line Auto Pilot Mode</span>
+                    <input type="checkbox" id="chk-opt-courseline" onchange="saveMapSettings()"
+                        style="width:16px; height:16px; cursor:pointer;">
+                </div>
+            </div>
+        </div>
+
+
+
+
+        <div style="margin-top:10px; border-top:1px solid #444; padding-top:10px;">
+            <label style="font-size:12px; color:#fff; font-weight:bold; margin-bottom:10px; display:block;">Map
+                Visibility</label>
+
+            <div style="display:flex; flex-direction:column; gap:8px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#aaa; font-size:13px;">Show Airports</span>
+                    <div style="display:flex; align-items:center; gap:5px;">
+                        <input type="color" id="col-air-neutral" value="#888888" onchange="renderAirports()"
+                            title="Neutral Color"
+                            style="width:22px; height:22px; padding:0; border:1px solid #555; background:none; cursor:pointer;">
+                        <input type="checkbox" id="chk-vis-air" checked
+                            onchange="toggleLayer(airportLayer, null); saveMapSettings()"
+                            style="width:16px; height:16px; cursor:pointer;">
+                    </div>
+                </div>
+                <!-- LIVE STATUS TOGGLE (Phase 3a) -->
+                <div
+                    style="display:flex; justify-content:space-between; align-items:center; margin-left:15px; border-left:2px solid #333; padding-left:10px;">
+                    <span style="color:#78aabc; font-size:11px;">📡 Live Airport Data</span>
+                    <input type="checkbox" id="chk-live-air" onchange="updateAirportStatus(); saveMapSettings()"
+                        style="width:14px; height:14px; cursor:pointer;">
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#aaa; font-size:13px;">Show Units (Master)</span>
+                    <input type="checkbox" id="chk-vis-unit" checked
+                        onchange="toggleLayer(unitLayer, null); saveMapSettings()"
+                        style="width:16px; height:16px; cursor:pointer;">
+                </div>
+
+                <!-- GRANULAR UNIT SWITCHES -->
+                <div class="sub-setting-group">
+                    <div class="setting-row">
+                        <span class="chk-label-icon" style="color:#78aabc;">
+                            <i class="fa-solid fa-plane"></i> Air Units
+                        </span>
+                        <input type="checkbox" id="chk-vis-unit-air" checked onchange="saveMapSettings()"
+                            style="width:14px; height:14px; cursor:pointer;">
+                    </div>
+                    <div class="setting-row">
+                        <span class="chk-label-icon" style="color:#2ecc71;">
+                            <i class="fa-solid fa-truck-field"></i> Ground Units
+                        </span>
+                        <input type="checkbox" id="chk-vis-unit-ground" checked onchange="saveMapSettings()"
+                            style="width:14px; height:14px; cursor:pointer;">
+                    </div>
+                    <div class="setting-row">
+                        <span class="chk-label-icon" style="color:#3498db;">
+                            <i class="fa-solid fa-ship"></i> Naval Units
+                        </span>
+                        <input type="checkbox" id="chk-vis-unit-naval" checked onchange="saveMapSettings()"
+                            style="width:14px; height:14px; cursor:pointer;">
+                    </div>
+                    <div class="setting-row">
+                        <span class="chk-label-icon" style="color:#95a5a6;">
+                            <i class="fa-solid fa-building"></i> Static Objects
+                        </span>
+                        <input type="checkbox" id="chk-vis-unit-static" onchange="saveMapSettings()"
+                            style="width:14px; height:14px; cursor:pointer;">
+                    </div>
+                </div>
+
+                <!-- AFFILIATION FILTERS (New) -->
+                <!-- AFFILIATION FILTERS (New) -->
+                <div class="sub-setting-group">
+
+
+                    <div style="display:flex; gap:5px; align-items:stretch;">
+                        <!-- Hostile -->
+                        <div class="mil-toggle active red" id="btn-vis-red" onclick="toggleCoalition('red')"
+                            style="flex:1; display:flex; flex-direction:column; justify-content:center; gap:2px; font-size:10px;">
+                            <i class="fa-solid fa-diamond" style="font-size:14px; margin-bottom:2px;"></i> Hostile
+                        </div>
+                        <input type="checkbox" id="chk-vis-unit-red" checked style="display:none;"
+                            onchange="saveMapSettings(); renderPois()">
+
+                        <!-- Friendly -->
+                        <div class="mil-toggle active blue" id="btn-vis-blue" onclick="toggleCoalition('blue')"
+                            style="flex:1; display:flex; flex-direction:column; justify-content:center; gap:2px; font-size:10px;">
+                            <i class="fa-solid fa-square"
+                                style="font-size:14px; margin-bottom:2px; transform: scaleX(1.4);"></i> Friendly
+                        </div>
+                        <input type="checkbox" id="chk-vis-unit-blue" checked style="display:none;"
+                            onchange="saveMapSettings(); renderPois()">
+
+                        <!-- Neutral -->
+                        <div class="mil-toggle active neutral" id="btn-vis-neutral" onclick="toggleCoalition('neutral')"
+                            style="flex:1; display:flex; flex-direction:column; justify-content:center; gap:2px; font-size:10px;">
+                            <i class="fa-solid fa-square" style="font-size:14px; margin-bottom:2px;"></i> Neutral
+                        </div>
+                        <input type="checkbox" id="chk-vis-unit-neutral" checked style="display:none;"
+                            onchange="saveMapSettings(); renderPois()">
+                    </div>
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#aaa; font-size:13px;">Show POIs</span>
+                    <input type="checkbox" id="chk-vis-poi" checked
+                        onchange="toggleLayer(poiLayer, null); saveMapSettings()"
+                        style="width:16px; height:16px; cursor:pointer;">
+                </div>
+
+                <!-- THREAT RINGS (Sub-menu of POIs) -->
+                <div
+                    style="display:flex; justify-content:space-between; align-items:center; margin-left:15px; border-left:2px solid #333; padding-left:10px;">
+                    <span style="color:#78aabc; font-size:11px;">Show Threat Rings</span>
+                    <div style="display:flex; align-items:center; gap:5px;">
+                        <!-- Slider moved here -->
+                        <input type="range" id="sld-threat-fill" min="0" max="100" value="20" title="Orbit Opacity"
+                            oninput="updateThreatFill(this.value)" onchange="saveMapSettings()"
+                            style="width:60px; cursor:pointer; height:4px;">
+                        <input type="checkbox" id="chk-vis-threats" checked onchange="renderPois(); saveMapSettings()"
+                            style="width:14px; height:14px; cursor:pointer;">
+                    </div>
+                </div>
+
+
+
+                <!-- Lat/Lon Grid -->
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
+                    <span style="color:#aaa; font-size:13px;">Lat/Lon Grid</span>
+                    <div style="display:flex; align-items:center; gap:5px;">
+                        <input type="color" id="col-latlon" value="#00ffcc"
+                            onchange="updateSettings(); saveMapSettings()" title="Grid Color"
+                            style="width:22px; height:22px; padding:0; border:1px solid #555; background:none; cursor:pointer;">
+                        <input type="checkbox" id="chk-vis-grid"
+                            onchange="toggleLayer(gridLayer, null); saveMapSettings()"
+                            style="width:16px; height:16px; cursor:pointer;">
+                    </div>
+                </div>
+
+                <!-- MGRS Grid -->
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#aaa; font-size:13px;">MGRS Grid</span>
+                    <div style="display:flex; align-items:center; gap:5px;">
+                        <input type="color" id="col-mgrs-gzd" value="#988035"
+                            onchange="updateSettings(); saveMapSettings()" title="GZD Color"
+                            style="width:22px; height:22px; padding:0; border:1px solid #555; background:none; cursor:pointer;">
+                        <input type="color" id="col-mgrs" value="#733f59" onchange="updateSettings(); saveMapSettings()"
+                            title="Grid Color"
+                            style="width:22px; height:22px; padding:0; border:1px solid #555; background:none; cursor:pointer;">
+                        <input type="checkbox" id="chk-vis-mgrs"
+                            onchange="toggleLayer(mgrsGridLayer, null); saveMapSettings()"
+                            style="width:16px; height:16px; cursor:pointer;">
+                    </div>
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#aaa; font-size:13px;">Altitude Info (Bottom)</span>
+                    <input type="checkbox" id="chk-vis-alt" checked onchange="toggleInfo('alt'); saveMapSettings()"
+                        style="width:16px; height:16px; cursor:pointer;">
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#aaa; font-size:13px;">Heading Info (Bottom)</span>
+                    <input type="checkbox" id="chk-vis-hdg" checked onchange="toggleInfo('hdg'); saveMapSettings()"
+                        style="width:16px; height:16px; cursor:pointer;">
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#aaa; font-size:13px;">Day/Night Cycle</span>
+                    <input type="checkbox" id="chk-vis-term"
+                        onchange="toggleLayer(terminatorLayer, null); saveMapSettings()"
+                        style="width:16px; height:16px; cursor:pointer;">
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#aaa; font-size:13px;">HUD Display Mode</span>
+                    <button id="btn-opt-hud" onclick="cycleHudMode(); saveMapSettings()"
+                        style="background:#111; border:1px solid #555; color:#fff; font-size:11px; padding:2px 8px; border-radius:4px; cursor:pointer; width:80px;">OFF</button>
+                </div>
+            </div>
+        </div>
+        <div class="form-row" style="margin-top:5px; border-top:1px solid #444; padding-top:10px;">
+            <label style="color:var(--accent); font-weight:bold;">Active Map Tuning: <span
+                    id="lbl-active-map-name">DARK</span></label>
+            <div class="form-row"><label>Opacity: <span id="val-map-op">1.0</span></label><input type="range" min="0.1"
+                    max="1.0" step="0.05" id="sld-map-op" oninput="tuneFilter('map', 'op', this.value)"
+                    onchange="saveMapSettings()"></div>
+            <div class="form-row"><label>Brightness: <span id="val-map-br">1.0</span></label><input type="range"
+                    min="0.1" max="2.0" step="0.05" id="sld-map-br" oninput="tuneFilter('map', 'br', this.value)"
+                    onchange="saveMapSettings()"></div>
+            <div class="form-row"><label>Contrast: <span id="val-map-con">1.0</span></label><input type="range"
+                    min="0.1" max="2.0" step="0.05" id="sld-map-con" oninput="tuneFilter('map', 'con', this.value)"
+                    onchange="saveMapSettings()">
+            </div>
+        </div>
+
+        <div class="form-row" style="margin-top:5px; border-top:1px solid #444; padding-top:10px;">
+            <label style="color:#2ecc71; font-weight:bold;">NVG Layer</label>
+            <div class="form-row"><label>Color Tint: <span id="val-nvg-sep">1.0</span></label><input type="range"
+                    min="0.0" max="1.0" step="0.05" id="sld-nvg-sep" oninput="tuneFilter('nvg', 'sep', this.value)">
+            </div>
+            <div class="form-row"><label>Gain: <span id="val-nvg-op">1.0</span></label><input type="range" min="0.0"
+                    max="1.0" step="0.05" id="sld-nvg-op" oninput="tuneFilter('nvg', 'op', this.value)"></div>
+            <div class="form-row"><label>Brightness: <span id="val-nvg-br">0.7</span></label><input type="range"
+                    min="0.1" max="2.0" step="0.05" id="sld-nvg-br" oninput="tuneFilter('nvg', 'br', this.value)"></div>
+            <div class="form-row"><label>Contrast: <span id="val-nvg-con">0.9</span></label><input type="range"
+                    min="0.1" max="2.0" step="0.05" id="sld-nvg-con" oninput="tuneFilter('nvg', 'con', this.value)">
+            </div>
+        </div>
+        <div class="form-row" style="margin-top:10px; border-top:1px solid #444; padding-top:10px;">
+            <label style="font-size:12px; color:#fff; font-weight:bold; margin-bottom:5px; display:block;">Pointer
+                Appearance</label>
+
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <select id="opt-ptr-style" onchange="updatePointerVisuals(); saveMapSettings()"
+                    style="flex-grow:1; background:#111; color:#fff; border:1px solid #555; padding:2px; margin-right:8px;">
+                    <option value="cross">Crosshair</option>
+                    <option value="dot">Dot</option>
+                    <option value="chevron">Chevron</option>
+                    <option value="circle">Circle</option>
+                    <option value="x">X-Mark</option>
+                    <option value="arrow">Arrow</option>
+                    <option value="diamond">Diamond</option>
+                    <option value="square">Square</option>
+                </select>
+                <input type="color" id="opt-ptr-color" value="#00ff00"
+                    onchange="updatePointerVisuals(); saveMapSettings()" class="color-picker-mini">
+            </div>
+        </div>
+        <div class="form-row"
+            style="margin-bottom:5px; background:#111; padding:10px; border-radius:4px; border:1px solid #444;">
+            <label style="color:#fff;">Interface Scale</label>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <i class="fa-solid fa-compress" style="font-size:12px; color:#777;"></i>
+                <input type="range" id="opt-ui-scale" min="0.5" max="2.0" step="0.05" value="1.0"
+                    oninput="applyUiScale(this.value)" onchange="updateSettings()" style="flex-grow:1; cursor:pointer;">
+                <i class="fa-solid fa-expand" style="font-size:12px; color:#777;"></i>
+                <span id="lbl-ui-scale" style="font-size:11px; width:30px; text-align:right;">1.0</span>
+            </div>
+        </div>
+        <div class="form-row" style="margin-top:5px;">
+            <label>Device Power</label>
+            <div
+                style="display:flex; justify-content:space-between; align-items:center; background:#111; padding:5px; border:1px solid #555; border-radius:4px;">
+                <span style="color:#78aabc; font-size:12px; font-weight:bold;">Prevent Sleep (Wake Lock)</span>
+                <input type="checkbox" id="chk-opt-wakelock" onchange="toggleWakeLock(); saveMapSettings()"
+                    style="width:16px; height:16px; cursor:pointer;">
+            </div>
+        </div>
+        <div class="form-row" style="margin-top:5px; border-top:1px solid #444; padding-top:10px;">
+            <label style="color:#78aabc; font-weight:bold; margin-bottom:5px;">Data Cartridge (QR)</label>
+            <div style="display:flex; gap:10px;">
+                <button class="btn-full btn-action" onclick="openShareModal()"><i class="fa-solid fa-qrcode"></i>
+                    Share</button>
+                <button class="btn-full btn-alert" onclick="openImportModal()"><i class="fa-solid fa-camera"></i>
+                    Import</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="route-drawer" class="drawer-panel">
+
+        <div id="view-missions" class="route-view">
+            <div class="panel-header">Mission Selector</div>
+
+            <button class="btn-full" onclick="createNewMission()" style="position:relative; margin-bottom:10px;">
+                Create New Mission
+                <i class="fa-solid fa-folder-plus"
+                    style="position:absolute; right:15px; top:50%; transform:translateY(-50%); color:#aaa;"></i>
+            </button>
+
+            <div class="form-row"><label>Available Missions</label></div>
+            <div id="mission-list" class="route-list-container"></div>
+        </div>
+        <div id="view-browser" class="route-view" style="display:none;">
+            <div class="panel-header">
+                <span id="browser-title" style="font-size:14px; color:#d1e3ea;">Route Manager</span>
+
+                <button onclick="exitToMissionSelector()"
+                    style="background:none; border:none; color:#78aabc; cursor:pointer; font-size:11px; display:flex; align-items:center; gap:5px; font-weight:bold; text-transform:uppercase;">
+                    <i class="fa-solid fa-arrow-left"></i> Mission Selector
+                </button>
+            </div>
+
+            <div
+                style="font-size:11px; color:#777; margin-bottom:10px; padding:0 5px; display:flex; justify-content:space-between;">
+                <span id="lbl-active-map">Map: --</span>
+                <span id="lbl-mission-status">LOCAL</span>
+            </div>
+
+            <button class="btn-full" onclick="createNewRoute()" style="position:relative;">
+                Create New Route
+                <i class="fa-solid fa-plus"
+                    style="position:absolute; right:15px; top:50%; transform:translateY(-50%); color:#aaa;"></i>
+            </button>
+
+            <div class="form-row"><label>Route Objects</label></div>
+            <div id="saved-list" class="route-list-container"></div>
+        </div>
+
+        <div id="view-editor" class="route-view" style="display:none;">
+            <div class="panel-header"><span id="route-title">Editing</span><button onclick="showBrowser()"
+                    style="background:none; border:none; color:#aaa; cursor:pointer;">Back</button></div>
+            <div class="form-row" style="background:rgba(0,0,0,0.3); padding:5px; border-radius:4px;"><label>Click / Add
+                    Altitude</label>
+                <div class="input-group">
+                    <div class="input-with-kb">
+                        <input type="number" id="global-alt" value="20000"
+                            style="width:50%; border-radius:4px 0 0 4px;">
+                        <div class="kb-trigger" onclick="openKeyboard('global-alt', 'number')">123</div>
+                    </div><select id="global-alt-type" style="width:30%; border-radius:0;">
+                        <option value="MSL">MSL</option>
+                        <option value="AGL">AGL</option>
+                    </select>
+                    <div class="unit-badge" id="lbl-global-alt-unit">ft</div>
+                </div>
+            </div>
+            <div style="display:flex; gap:5px;">
+                <button class="btn-square" id="btn-mode-wp" onclick="setClickMode('wp')" title="Click Map for WP"><i
+                        class="fa-solid fa-map-pin"></i></button>
+                <button class="btn-square" id="btn-mode-tgt" onclick="setClickMode('tgt')" title="Click Map for TGT"><i
+                        class="fa-solid fa-bullseye"></i></button>
+                <button class="btn-square" onclick="toggleManualInput()" title="Manual Input"><i
+                        class="fa-solid fa-keyboard"></i></button>
+                <button class="btn-square" onclick="autoRenameWaypoints()" title="Auto Rename List"><i
+                        class="fa-solid fa-arrow-down-1-9"></i></button>
+            </div>
+            <div id="manual-form"
+                style="display:none; background:#000; padding:10px; border-radius:6px; border:1px solid #444;">
+                <div
+                    style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:1px solid #333; padding-bottom:5px;">
+                    <span style="font-size:12px; font-weight:bold; color:#ccc;">MANUAL INPUT</span>
+                    <button onclick="closeManualInput()"
+                        style="background:none; border:none; color:#aaa; cursor:pointer; font-weight:bold; font-size:14px;">✕</button>
+                </div>
+                <div class="form-row"><label>Name</label>
+                    <div class="input-with-kb"><input type="text" id="inp-name">
+                        <div class="kb-trigger" onclick="openKeyboard('inp-name', 'text')"><i
+                                class="fa-regular fa-keyboard"></i></div>
+                    </div>
+                </div>
+                <div class="form-row"><label>Type</label><select id="inp-type">
+                        <option value="wp">Waypoint</option>
+                        <option value="tgt">Target</option>
+                    </select></div>
+                <div id="inp-latlon-box">
+                    <div class="form-row"><label>Latitude</label>
+                        <div class="input-with-kb"><input type="text" id="inp-lat" placeholder="N 42 15 30.00"
+                                oninput="maskDMS(this, 'lat')" maxlength="13">
+                            <div class="kb-trigger" onclick="openKeyboard('inp-lat', 'text')"><i
+                                    class="fa-regular fa-keyboard"></i></div>
+                        </div>
+                    </div>
+                    <div class="form-row"><label>Longitude</label>
+                        <div class="input-with-kb"><input type="text" id="inp-lon" placeholder="E 041 30 00.00"
+                                oninput="maskDMS(this, 'lon')" maxlength="14">
+                            <div class="kb-trigger" onclick="openKeyboard('inp-lon', 'text')"><i
+                                    class="fa-regular fa-keyboard"></i></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="inp-mgrs-box" style="display:none;">
+                    <div class="form-row"><label>MGRS</label>
+                        <div class="input-with-kb"><input type="text" id="inp-mgrs" placeholder="38T KM 12345 67890"
+                                oninput="maskMGRS(this)" maxlength="18">
+                            <div class="kb-trigger" onclick="openKeyboard('inp-mgrs', 'text')"><i
+                                    class="fa-regular fa-keyboard"></i></div>
+                        </div>
+                    </div>
+                </div>
+                <button class="btn-full" id="btn-add-point" onclick="addManualPoint()" style="margin-top:5px;">Add
+                    Point</button>
+            </div>
+            <div id="active-route-list" class="route-list-container"></div>
+            <div class="route-footer" id="route-footer">Total: 0 nm</div>
+            <div style="margin-top:auto; display:flex; gap:5px; flex-direction:column;">
+                <div class="input-group"><input type="color" id="save-color" value="#78aabc" title="Route Color">
+                    <div class="input-with-kb"><input type="text" id="save-name" placeholder="Route Name"
+                            style="width:100%;">
+                        <div class="kb-trigger" onclick="openKeyboard('save-name', 'text')"><i
+                                class="fa-regular fa-keyboard"></i></div>
+                    </div>
+                </div><button class="btn-full" onclick="saveCurrentRoute()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="poi-drawer" class="drawer-panel">
+        <div class="panel-header">Visual Points Off Interest</div>
+
+        <button class="btn-full"
+            onclick="if(confirm('Delete all targets?')) { socket.emit('update_pois', []); showToast('Cleared All Targets'); }"
+            style="position:relative;">
+            Clear All Targets
+            <i class="fa-solid fa-trash"
+                style="position:absolute; right:15px; top:50%; transform:translateY(-50%); color:#aaa;"></i>
+        </button>
+
+        <div class="form-row"><label>Active Visual POI</label></div>
+        <div id="poi-list-container" class="route-list-container"></div>
+    </div>
+
+    <div id="sp-text-input-box" style="display:none;">
+        <input type="text" id="sp-text-input" placeholder="Type here..."
+            onkeydown="if(event.key==='Enter') Scratchpad.commitText()">
+        <button onclick="Scratchpad.commitText()"><i class="fa-solid fa-check"></i></button>
+    </div>
+
+    <div id="sp-sub-sidebar">
+        <div class="btn-square" id="btn-sp-expand" onclick="Scratchpad.toggleToolMenu()"
+            style="font-size:12px; height:30px; min-height:30px; color:#aaa;">
+            <i class="fa-solid fa-chevron-up"></i>
+        </div>
+
+        <div class="btn-square sp-tool-item" onclick="Scratchpad.clear()"
+            style="color:#e74c3c; border-color:#5c2121; font-size:12px; height:30px; min-height:30px;">
+            <i class="fa-solid fa-trash"></i>
+        </div>
+
+        <div class="sp-tool-wrapper sp-tool-item">
+            <div class="btn-square" onclick="Scratchpad.togglePopout('opacity')" title="Opacity"><i
+                    class="fa-solid fa-circle-half-stroke"></i></div>
+            <div class="sp-popout" id="pop-opacity">
+                <label>Overlay Opacity</label>
+                <input type="range" min="0.1" max="1.0" step="0.1" value="1.0"
+                    oninput="Scratchpad.setOpacity(this.value)">
+            </div>
+        </div>
+
+        <div class="sp-tool-wrapper sp-tool-item">
+            <div class="btn-square" id="btn-tool-eraser" onmousedown="Scratchpad.handlePressStart('eraser')"
+                ontouchstart="Scratchpad.handlePressStart('eraser')" onmouseup="Scratchpad.handlePressEnd('eraser')"
+                ontouchend="Scratchpad.handlePressEnd('eraser')" title="Eraser">
+                <i class="fa-solid fa-eraser"></i>
+            </div>
+            <div class="sp-popout" id="pop-eraser">
+                <label>Eraser Size</label>
+                <input type="range" min="5" max="50" step="5" value="20" oninput="Scratchpad.eraserSize = this.value">
+            </div>
+        </div>
+
+        <div class="sp-tool-wrapper sp-tool-item">
+            <div class="btn-square" id="btn-tool-text" onmousedown="Scratchpad.handlePressStart('text')"
+                ontouchstart="Scratchpad.handlePressStart('text')" onmouseup="Scratchpad.handlePressEnd('text')"
+                ontouchend="Scratchpad.handlePressEnd('text')" title="Text Tool">
+                <i class="fa-solid fa-font"></i>
+            </div>
+            <div class="sp-popout" id="pop-text">
+                <label>Font Size</label>
+                <input type="range" min="10" max="40" step="2" value="16" oninput="Scratchpad.fontSize = this.value">
+            </div>
+        </div>
+
+        <div class="sp-tool-wrapper sp-tool-item">
+            <div class="btn-square active" id="btn-tool-pen" onmousedown="Scratchpad.handlePressStart('pen')"
+                ontouchstart="Scratchpad.handlePressStart('pen')" onmouseup="Scratchpad.handlePressEnd('pen')"
+                ontouchend="Scratchpad.handlePressEnd('pen')" title="Pen Color">
+                <i class="fa-solid fa-pen"></i>
+            </div>
+            <div class="sp-popout" id="pop-pen">
+                <label>Pen Color</label>
+
+                <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px; margin-bottom:5px;">
+
+                    <div class="color-dot" style="background:#e74c3c" title="Red (Hostile)"
+                        onclick="Scratchpad.setColor('#e74c3c')"></div>
+                    <div class="color-dot" style="background:#3498db" title="Blue (Friendly)"
+                        onclick="Scratchpad.setColor('#3498db')"></div>
+                    <div class="color-dot" style="background:#2ecc71" title="Green"
+                        onclick="Scratchpad.setColor('#2ecc71')"></div>
+                    <div class="color-dot" style="background:#f1c40f" title="Yellow"
+                        onclick="Scratchpad.setColor('#f1c40f')"></div>
+
+                    <div class="color-dot" style="background:#ffffff" title="White"
+                        onclick="Scratchpad.setColor('#ffffff')"></div>
+                    <div class="color-dot" style="background:#000000; border:1px solid #777;" title="Black"
+                        onclick="Scratchpad.setColor('#000000')"></div>
+                    <div class="color-dot" style="background:#9b59b6" title="Purple"
+                        onclick="Scratchpad.setColor('#9b59b6')"></div>
+
+                    <div class="color-dot"
+                        style="background:conic-gradient(red, yellow, lime, aqua, blue, magenta, red); border:1px solid #777; position:relative; overflow:hidden;"
+                        title="Custom Color...">
+                        <input type="color" id="sp-pen-color" oninput="Scratchpad.setColor(this.value)"
+                            style="opacity:0; position:absolute; top:0; left:0; width:100%; height:100%; cursor:pointer; padding:0; border:none;">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="sidebar" id="sidebar-right">
+        <div class="btn-square" id="btn-fullscreen" onclick="toggleFullScreen()" title="Toggle Full Screen"><i
+                class="fa-solid fa-expand"></i></div>
+        <div style="height:5px;"></div>
+        <div class="btn-square" id="btn-map-layers" onclick="toggleMapMenu()" title="Map Layers"><i
+                class="fa-solid fa-layer-group"></i></div>
+        <button class="btn-square" onclick="map.zoomIn()" title="Zoom In"><i class="fa-solid fa-plus"></i></button>
+        <button class="btn-square" onclick="map.zoomOut()" title="Zoom Out"><i class="fa-solid fa-minus"></i></button>
+        <div style="height:10px;"></div>
+        <button class="btn-square" id="btn-measure" onclick="toggleMeasureTool()" title="Measure Distance"><i
+                class="fa-solid fa-ruler-horizontal"></i></button>
+        <div class="btn-square" id="btn-labels" onclick="toggleLabels()" title="Toggle Waypoint Labels"><i
+                class="fa-solid fa-tag"></i></div>
+        <div style="height:10px;"></div>
+        <button class="btn-square" id="btn-follow" onclick="toggleFollow()" title="Follow Plane"><i
+                class="fa-solid fa-crosshairs"></i></button>
+        <button class="btn-square" id="btn-hdg-up" onclick="toggleHeadingUp()" title="Toggle Heading Up"><i
+                class="fa-regular fa-compass"></i></button>
+        <div style="height:5px;"></div>
+        <div class="btn-square" id="btn-scratchpad" onclick="Scratchpad.toggleMode()" title="Toggle Scratchpad">
+            <i class="fa-solid fa-pen-ruler"></i>
+        </div>
+        <div style="height:55px;"></div>
+    </div>
+
+    <div class="popup-menu" id="map-menu">
+        <div style="font-size:10px; color:#777; padding:0 5px; text-transform:uppercase;">Base Map</div>
+        <button class="menu-item" onclick="setMapLayer('dark')" data-layer="dark"><span>Tactical (Dark)</span></button>
+        <button class="menu-item" onclick="setMapLayer('opentopo')" data-layer="opentopo"><span>Military
+                Topo</span></button>
+        <button class="menu-item" onclick="setMapLayer('sat')" data-layer="sat"><span>Satellite</span></button>
+        <button class="menu-item" onclick="setMapLayer('cyclosm')" data-layer="cyclosm"><span>Detailed
+                Topo</span></button>
+        <button class="menu-item" onclick="setMapLayer('light')" data-layer="light"><span>Street (Light)</span></button>
+        <button class="menu-item" onclick="setMapLayer('darkstreet')" data-layer="darkstreet"><span>Street
+                (Dark)</span></button>
+        <button class="menu-item" onclick="setMapLayer('vfr')" data-layer="vfr"><span>VFR Chart (Day)</span></button>
+        <button class="menu-item" onclick="setMapLayer('vfr_night')" data-layer="vfr_night"><span>VFR Chart
+                (Night)</span></button>
+        <button class="menu-item" onclick="setMapLayer('tf_landscape')" data-layer="tf_landscape"><span>TF
+                Landscape</span></button>
+        <button class="menu-item" onclick="setMapLayer('tf_outdoors')" data-layer="tf_outdoors"><span>TF
+                Outdoors</span></button>
+        <button class="menu-item" onclick="setMapLayer('relief')" data-layer="relief"><span>Terrain
+                Relief</span></button>
+
+        <div style="border-top:1px solid #444; margin:5px 0;"></div>
+        <div style="font-size:10px; color:#777; padding:0 5px; text-transform:uppercase;">Layer Overlays</div>
+
+        <button class="menu-item" id="btn-ov-urban" onclick="toggleOverlay('urban')">
+            <span>Urban Areas</span><input type="checkbox" class="overlay-chk" id="chk-ov-urban">
+        </button>
+        <button class="menu-item" id="btn-ov-buildings" onclick="toggleOverlay('buildings')">
+            <span>Buildings</span><input type="checkbox" class="overlay-chk" id="chk-ov-buildings">
+        </button>
+        <button class="menu-item" id="btn-ov-roads" onclick="toggleOverlay('roads')">
+            <span>Road Network</span><input type="checkbox" class="overlay-chk" id="chk-ov-roads">
+        </button>
+        <button class="menu-item" id="btn-ov-contours" onclick="toggleOverlay('contours')">
+            <span>Contours (Elev)</span><input type="checkbox" class="overlay-chk" id="chk-ov-contours">
+        </button>
+        <button class="menu-item" id="btn-ov-hillshade" onclick="toggleOverlay('hillshade')">
+            <span>Hillshade</span><input type="checkbox" class="overlay-chk" id="chk-ov-hillshade">
+        </button>
+        <button class="menu-item" id="btn-ov-labels" onclick="toggleOverlay('labels')">
+            <span>Text Labels</span><input type="checkbox" class="overlay-chk" id="chk-ov-labels">
+        </button>
+        <div style="border-top:1px solid #444; margin:5px 0;"></div>
+
+        <button class="menu-item" id="btn-ov-nvg" onclick="cycleNvgMode()">
+            <span>Night Vision (NVG)</span>
+            <i class="fa-regular fa-square" id="icon-nvg-state" style="width:14px; text-align:center;"></i>
+        </button>
+    </div>
+
+    <div id="poi-modal"
+        style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:#2b3a41; padding:15px; border:1px solid #78aabc; border-radius:8px; z-index:4000; box-shadow:0 10px 20px rgba(0,0,0,0.5); flex-direction:column; gap:10px; min-width:280px;">
+        <div style="color:#fff; font-weight:bold; border-bottom:1px solid #555; padding-bottom:5px;">Edit Marker</div>
+        <div style="background:rgba(0,0,0,0.3); padding:8px; border-radius:4px; margin: 5px 0; border:1px solid #444;">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px;">
+                <div>
+                    <div style="font-size:9px; color:#aaa; text-transform:uppercase;">Coordinate</div>
+                    <div id="poi-info-coord" style="font-family:monospace; color:#78aabc; font-size:11px;">--</div>
+                </div>
+                <div>
+                    <div style="font-size:9px; color:#aaa; text-transform:uppercase;">Elevation</div>
+                    <div id="poi-info-alt" style="font-family:monospace; color:#78aabc; font-size:11px;">--</div>
+                </div>
+            </div>
+        </div>
+        <div class="input-with-kb"><input type="text" id="poi-name" placeholder="Name">
+            <div class="kb-trigger" onclick="openKeyboard('poi-name', 'text')"><i class="fa-regular fa-keyboard"></i>
+            </div>
+        </div>
+        <div id="box-affil-select" style="display:none;">
+            <div style="font-size:10px; color:#aaa; text-transform:uppercase; margin-top:5px;">Affiliation (Side)</div>
+            <select id="poi-affil" onchange="renderPoiSelector()"
+                style="width:100%; height:auto; padding:8px; background:#111; color:#fff; border:1px solid #555;">
+                <option value="H">Hostile (Red)</option>
+                <option value="F">Friendly (Blue)</option>
+                <option value="N">Neutral (Green/Yel)</option>
+                <option value="U">Unknown (Yellow)</option>
+            </select>
+        </div>
+        <div id="box-color-picker" style="display:block;">
+            <div style="font-size:10px; color:#aaa; text-transform:uppercase; margin-top:5px;">Pin Color</div><input
+                type="color" id="poi-color" value="#ffff00" style="width:100%; height:30px; cursor:pointer;">
+        </div>
+        <div style="font-size:10px; color:#aaa; text-transform:uppercase; margin-top:5px;">Tactical Symbol</div>
+        <div class="icon-grid" style="background:#747778; padding:5px; border-radius:4px; gap:4px;"></div>
+        <div class="threat-row">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+                <span style="font-size:10px; color:#aaa; text-transform:uppercase; font-weight:bold;">Threat
+                    Rings</span>
+                <button id="btn-poi-threat-vis" class="list-btn" onclick="togglePoiThreatVis()"
+                    title="Toggle Rings for this POI">
+                    <i class="fa-solid fa-eye"></i>
+                </button>
+            </div>
+            <div class="threat-input-group">
+                <label>Detect (<span class="lbl-dist-unit">nm</span>)</label>
+                <input type="number" id="poi-threat-detect" step="0.5" min="0" placeholder="0.0">
+                <input type="checkbox" id="chk-poi-threat-detect" title="Enable Detect Ring">
+            </div>
+            <div class="threat-input-group">
+                <label>Deadly (<span class="lbl-dist-unit">nm</span>)</label>
+                <input type="number" id="poi-threat-deadly" step="0.5" min="0" placeholder="0.0">
+                <input type="checkbox" id="chk-poi-threat-deadly" title="Enable Deadly Ring">
+            </div>
+        </div>
+        <div id="poi-btn-container" style="display:flex; gap:5px; margin-top:10px;">
+        </div>
+    </div>
+    </div>
+
+    <div id="modal-share" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-header"><span>Data Cartridge : SEND</span><button onclick="closeModal('share')"
+                    class="list-btn"><i class="fa-solid fa-xmark"></i></button></div>
+
+            <div class="modal-section">
+                <span class="modal-label">Meta Data</span>
+                <div class="input-with-kb" style="margin-bottom:5px;">
+                    <input type="text" id="share-sender" placeholder="Commander Name" value="Commander">
+                    <div class="kb-trigger" onclick="openKeyboard('share-sender','text')">⌨</div>
+                </div>
+                <div class="input-with-kb">
+                    <input type="text" id="share-briefing" placeholder="Briefing / Notes">
+                    <div class="kb-trigger" onclick="openKeyboard('share-briefing','text')">⌨</div>
+                </div>
+            </div>
+
+            <div class="modal-section"
+                style="border-left: 2px solid var(--accent); background:rgba(120, 170, 188, 0.05);">
+                <span class="modal-label" style="color:var(--accent);">Select Mission to Share</span>
+                <select id="share-mission-select" onchange="updateShareList()"
+                    style="width:100%; padding:8px; background:#111; color:#fff; border:1px solid #555;"></select>
+            </div>
+
+            <div class="modal-section">
+                <span class="modal-label">Select Payloads</span>
+                <div class="chk-item" style="border-bottom:1px solid #444; margin-bottom:5px; padding-bottom:5px;">
+                    <input type="checkbox" id="share-pois" checked>
+                    <span>Include POI List</span>
+                </div>
+                <div id="share-routes-list" class="chk-list"></div>
+            </div>
+
+            <button class="btn-full btn-action" onclick="generateMissionQR()">Generate Secure QR</button>
+            <button class="btn-full btn-alert" style="margin-top:5px;" onclick="exportMissionToFile()">
+                <i class="fa-solid fa-file-export"></i> Export to Data File (.json)
+            </button>
+            <div id="qr-result-area" style="display:none; text-align:center;">
+                <div id="qr-output"></div>
+                <button class="btn-full" onclick="downloadQR()" style="margin-top:10px;">
+                    <i class="fa-solid fa-download"></i> Download Image
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-import" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-header">
+                <span>DATA CARTRIDGE : RECEIVE</span>
+                <button onclick="closeModal('import')" class="list-btn"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div id="import-step-1">
+                <div class="modal-section" style="padding:0; border:none; background:transparent;">
+                    <div class="modal-label" style="margin-bottom:5px;">OPTICAL SENSOR</div>
+                    <div class="camera-viewport">
+                        <div id="reader"></div>
+                        <div
+                            style="position:absolute; bottom:5px; width:100%; text-align:center; font-size:10px; color:var(--accent); opacity:0.7; pointer-events:none;">
+                            SCANNING ACTIVE
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display:flex; align-items:center; gap:15px; margin:20px 0;">
+                    <div style="height:1px; background:#444; flex-grow:1;"></div>
+                    <span style="font-size:10px; color:#555; font-weight:bold; letter-spacing:1px;">OR MANUAL
+                        IMPORT</span>
+                    <div style="height:1px; background:#444; flex-grow:1;"></div>
+                </div>
+
+                <div id="drop-area" class="drop-zone" onclick="document.getElementById('qr-file-input').click()">
+                    <i class="fa-solid fa-file-import"></i>
+                    <div style="font-weight:bold; font-size:12px;">DROP QR OR MISSION FILE HERE</div>
+                    <div style="font-size:10px; opacity:0.7; margin-top:2px;">CLICK TO BROWSE (.png, .json)</div>
+                    <input type="file" id="qr-file-input" accept="image/*" style="display:none;">
+                </div>
+            </div>
+
+            <div id="import-step-2" style="display:none;">
+                <div class="modal-section" style="border-color: #2ecc71; background: rgba(46, 204, 113, 0.05);">
+                    <span class="modal-label" style="color:#2ecc71;">INCOMING TRANSMISSION</span>
+                    <div style="font-size:14px; font-weight:bold; color:#fff; margin-top:5px;" id="import-meta-sender">
+                    </div>
+                    <div style="font-size:12px; color:#ccc; margin-top:2px; font-style:italic;" id="import-meta-info">
+                    </div>
+                </div>
+
+                <div class="modal-section" style="margin-top:10px;">
+                    <span class="modal-label">PAYLOAD MANIFEST</span>
+                    <ul id="import-manifest"
+                        style="margin:0; padding-left:20px; font-size:13px; color:#d1e3ea; list-style-type: square;">
+                    </ul>
+                </div>
+
+                <button class="btn-full btn-success" style="margin-top:15px;" onclick="confirmImport()">CONFIRM
+                    MERGE</button>
+                <button class="btn-full btn-danger" style="margin-top:5px;"
+                    onclick="closeModal('import')">DISCARD</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="virtual-keyboard">
+        <div style="display:flex; justify-content:space-between; margin-bottom:5px;"><span
+                style="font-size:12px; color:#aaa; font-weight:bold;">KEYBOARD</span><button onclick="closeKeyboard()"
+                style="background:none; border:none; color:#aaa; cursor:pointer;">✕</button></div>
+        <div id="kb-keys-container"></div>
+    </div>
+
+    <script src="/static/js/map.js"></script>
+    <div id="virtual-cursor"></div>
+    <div id="scratchpad-layer">
+        <div id="sp-text-cursor">SCRATCHPAD MODE</div>
+        <canvas id="scratchpad-canvas"></canvas>
+    </div>
+</body>
+
+</html>
