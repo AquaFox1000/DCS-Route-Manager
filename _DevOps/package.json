@@ -1,8 +1,0 @@
-{
-    "scripts": {
-        "agent-save": "powershell -ExecutionPolicy Bypass -File \"./_DevOps/.scripts/smart-backup.ps1\"",
-        "agent-undo": "powershell -ExecutionPolicy Bypass -File \"./_DevOps/.scripts/smart-undo.ps1\"",
-        "git-main": "powershell -ExecutionPolicy Bypass -File \"./_DevOps/scripts/git_sync_main.ps1\"",
-        "git-release": "powershell -ExecutionPolicy Bypass -File \"./_DevOps/scripts/git_sync_release.ps1\""
-    }
-}
