@@ -533,7 +533,8 @@
             margin-bottom: 3px;
         }
 
-        label {
+        label,
+        .lbl-text {
             font-size: 11px;
             color: #aaa;
             text-transform: uppercase;
@@ -2070,18 +2071,18 @@
 
             <!-- Coalition Filters -->
             <div class="layer-toggle-grid" style="grid-template-columns: 1fr 1fr 1fr; margin-top: 5px;">
-                <label class="layer-toggle-btn active" id="btn-vis-red" onclick="toggleCoalition('red')"
+                <div class="layer-toggle-btn active" id="btn-vis-red" onclick="toggleCoalition('red')"
                     style="justify-content: center;">
                     <span style="font-weight: bold;">HOSTILE</span>
-                </label>
-                <label class="layer-toggle-btn active" id="btn-vis-blue" onclick="toggleCoalition('blue')"
+                </div>
+                <div class="layer-toggle-btn active" id="btn-vis-blue" onclick="toggleCoalition('blue')"
                     style="justify-content: center;">
                     <span style="font-weight: bold;">FRIENDLY</span>
-                </label>
-                <label class="layer-toggle-btn active" id="btn-vis-neutral" onclick="toggleCoalition('neutral')"
+                </div>
+                <div class="layer-toggle-btn active" id="btn-vis-neutral" onclick="toggleCoalition('neutral')"
                     style="justify-content: center;">
                     <span>NEUTRAL</span>
-                </label>
+                </div>
                 <!-- Hidden inputs kept for logic compatibility -->
                 <input type="checkbox" id="chk-vis-unit-red" checked style="display:none;"
                     onchange="saveMapSettings(); renderPois()">
@@ -2316,7 +2317,7 @@
                     style="position:absolute; right:15px; top:50%; transform:translateY(-50%); color:#aaa;"></i>
             </button>
 
-            <div class="form-row"><label>Available Missions</label></div>
+            <div class="form-row"><span class="lbl-text">Available Missions</span></div>
             <div id="mission-list" class="route-list-container"></div>
         </div>
         <div id="view-browser" class="route-view" style="display:none;">
@@ -2341,14 +2342,15 @@
                     style="position:absolute; right:15px; top:50%; transform:translateY(-50%); color:#aaa;"></i>
             </button>
 
-            <div class="form-row"><label>Route Objects</label></div>
+            <div class="form-row"><span class="lbl-text">Route Objects</span></div>
             <div id="saved-list" class="route-list-container"></div>
         </div>
 
         <div id="view-editor" class="route-view" style="display:none;">
             <div class="panel-header"><span id="route-title">Editing</span><button onclick="showBrowser()"
                     style="background:none; border:none; color:#aaa; cursor:pointer;">Back</button></div>
-            <div class="form-row" style="background:rgba(0,0,0,0.3); padding:5px; border-radius:4px;"><label>Click / Add
+            <div class="form-row" style="background:rgba(0,0,0,0.3); padding:5px; border-radius:4px;"><label
+                    for="global-alt">Click / Add
                     Altitude</label>
                 <div class="input-group">
                     <div class="input-with-kb">
@@ -2380,25 +2382,25 @@
                     <button onclick="closeManualInput()"
                         style="background:none; border:none; color:#aaa; cursor:pointer; font-weight:bold; font-size:14px;">✕</button>
                 </div>
-                <div class="form-row"><label>Name</label>
+                <div class="form-row"><label for="inp-name">Name</label>
                     <div class="input-with-kb"><input type="text" id="inp-name">
                         <div class="kb-trigger" onclick="openKeyboard('inp-name', 'text')"><i
                                 class="fa-regular fa-keyboard"></i></div>
                     </div>
                 </div>
-                <div class="form-row"><label>Type</label><select id="inp-type">
+                <div class="form-row"><label for="inp-type">Type</label><select id="inp-type">
                         <option value="wp">Waypoint</option>
                         <option value="tgt">Target</option>
                     </select></div>
                 <div id="inp-latlon-box">
-                    <div class="form-row"><label>Latitude</label>
+                    <div class="form-row"><label for="inp-lat">Latitude</label>
                         <div class="input-with-kb"><input type="text" id="inp-lat" placeholder="N 42 15 30.00"
                                 oninput="maskDMS(this, 'lat')" maxlength="13">
                             <div class="kb-trigger" onclick="openKeyboard('inp-lat', 'text')"><i
                                     class="fa-regular fa-keyboard"></i></div>
                         </div>
                     </div>
-                    <div class="form-row"><label>Longitude</label>
+                    <div class="form-row"><label for="inp-lon">Longitude</label>
                         <div class="input-with-kb"><input type="text" id="inp-lon" placeholder="E 041 30 00.00"
                                 oninput="maskDMS(this, 'lon')" maxlength="14">
                             <div class="kb-trigger" onclick="openKeyboard('inp-lon', 'text')"><i
@@ -2407,7 +2409,7 @@
                     </div>
                 </div>
                 <div id="inp-mgrs-box" style="display:none;">
-                    <div class="form-row"><label>MGRS</label>
+                    <div class="form-row"><label for="inp-mgrs">MGRS</label>
                         <div class="input-with-kb"><input type="text" id="inp-mgrs" placeholder="38T KM 12345 67890"
                                 oninput="maskMGRS(this)" maxlength="18">
                             <div class="kb-trigger" onclick="openKeyboard('inp-mgrs', 'text')"><i
@@ -2443,7 +2445,7 @@
                 style="position:absolute; right:15px; top:50%; transform:translateY(-50%); color:#aaa;"></i>
         </button>
 
-        <div class="form-row"><label>Active Visual POI</label></div>
+        <div class="form-row"><span class="lbl-text">Active Visual POI</span></div>
         <div id="poi-list-container" class="route-list-container"></div>
     </div>
 
@@ -2468,8 +2470,8 @@
             <div class="btn-square" onclick="Scratchpad.togglePopout('opacity')" title="Opacity"><i
                     class="fa-solid fa-circle-half-stroke"></i></div>
             <div class="sp-popout" id="pop-opacity">
-                <label>Overlay Opacity</label>
-                <input type="range" min="0.1" max="1.0" step="0.1" value="1.0"
+                <label for="sp-opacity">Overlay Opacity</label>
+                <input type="range" id="sp-opacity" min="0.1" max="1.0" step="0.1" value="1.0"
                     oninput="Scratchpad.setOpacity(this.value)">
             </div>
         </div>
@@ -2481,8 +2483,9 @@
                 <i class="fa-solid fa-eraser"></i>
             </div>
             <div class="sp-popout" id="pop-eraser">
-                <label>Eraser Size</label>
-                <input type="range" min="5" max="50" step="5" value="20" oninput="Scratchpad.eraserSize = this.value">
+                <label for="sp-eraser-size">Eraser Size</label>
+                <input type="range" id="sp-eraser-size" min="5" max="50" step="5" value="20"
+                    oninput="Scratchpad.eraserSize = this.value">
             </div>
         </div>
 
@@ -2493,8 +2496,9 @@
                 <i class="fa-solid fa-font"></i>
             </div>
             <div class="sp-popout" id="pop-text">
-                <label>Font Size</label>
-                <input type="range" min="10" max="40" step="2" value="16" oninput="Scratchpad.fontSize = this.value">
+                <label for="sp-font-size">Font Size</label>
+                <input type="range" id="sp-font-size" min="10" max="40" step="2" value="16"
+                    oninput="Scratchpad.fontSize = this.value">
             </div>
         </div>
 
@@ -2505,7 +2509,7 @@
                 <i class="fa-solid fa-pen"></i>
             </div>
             <div class="sp-popout" id="pop-pen">
-                <label>Pen Color</label>
+                <span class="lbl-text">Pen Color</span>
 
                 <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px; margin-bottom:5px;">
 
@@ -2657,12 +2661,12 @@
                 </button>
             </div>
             <div class="threat-input-group">
-                <label>Detect (<span class="lbl-dist-unit">nm</span>)</label>
+                <label for="poi-threat-detect">Detect (<span class="lbl-dist-unit">nm</span>)</label>
                 <input type="number" id="poi-threat-detect" step="0.5" min="0" placeholder="0.0">
                 <input type="checkbox" id="chk-poi-threat-detect" title="Enable Detect Ring">
             </div>
             <div class="threat-input-group">
-                <label>Deadly (<span class="lbl-dist-unit">nm</span>)</label>
+                <label for="poi-threat-deadly">Deadly (<span class="lbl-dist-unit">nm</span>)</label>
                 <input type="number" id="poi-threat-deadly" step="0.5" min="0" placeholder="0.0">
                 <input type="checkbox" id="chk-poi-threat-deadly" title="Enable Deadly Ring">
             </div>
