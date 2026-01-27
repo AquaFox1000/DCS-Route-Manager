@@ -1,0 +1,128 @@
+{
+    "coords": "latlon",
+    "altUnit": "m",
+    "distUnit": "km",
+    "defAlt": 3000,
+    "layer": "dark",
+    "visibleRoutes": [
+        "Route 1"
+    ],
+    "navFlyBy": false,
+    "navCourseLine": false,
+    "colors": {
+        "latlon": "#00ffcc",
+        "mgrs": "#733f59",
+        "mgrsGzd": "#988035"
+    },
+    "overlays": {
+        "contours": false,
+        "urban": false,
+        "roads": false,
+        "labels": true,
+        "buildings": false,
+        "hillshade": true
+    },
+    "view": {
+        "zoom": 9,
+        "center": {
+            "lat": 41.99318090502962,
+            "lng": 41.61209106445313
+        }
+    },
+    "threatFill": 0,
+    "activeState": {
+        "mission": "1234",
+        "route": null
+    },
+    "mapFilters": {
+        "dark": {
+            "br": 1,
+            "con": 1,
+            "op": 1
+        },
+        "light": {
+            "br": 0.65,
+            "con": 2,
+            "op": 1
+        },
+        "darkstreet": {
+            "br": 2,
+            "con": 1,
+            "op": 1
+        },
+        "sat": {
+            "br": 1.75,
+            "con": 1.4,
+            "op": 1
+        },
+        "vfr": {
+            "br": 0.5,
+            "con": 1.6,
+            "op": 1
+        },
+        "vfr_night": {
+            "br": 1.2,
+            "con": 1,
+            "op": 1
+        },
+        "relief": {
+            "br": 0.7,
+            "con": 1.2,
+            "op": 1
+        },
+        "opentopo": {
+            "br": 1.05,
+            "con": 1.2,
+            "op": 0.6
+        },
+        "cyclosm": {
+            "br": 0.65,
+            "con": 2,
+            "op": 1
+        },
+        "tf_landscape": {
+            "br": 1,
+            "con": 1,
+            "op": 1
+        },
+        "tf_outdoors": {
+            "br": 1,
+            "con": 1,
+            "op": 1
+        },
+        "winter": {
+            "br": 1,
+            "con": 1,
+            "op": 1
+        }
+    },
+    "visuals": {
+        "brightness": "1",
+        "contrast": "1",
+        "opacity": "1"
+    },
+    "vis": {
+        "airports": true,
+        "units": true,
+        "units_air": true,
+        "units_ground": true,
+        "units_naval": true,
+        "units_static": true,
+        "pois": true,
+        "threats": true,
+        "theaterThreats": false,
+        "theaterOpacity": "0",
+        "grid": false,
+        "mgrs": false,
+        "alt": true,
+        "hdg": true,
+        "wakeLock": false,
+        "units_red": true,
+        "units_blue": true,
+        "units_neutral": true,
+        "hudMode": 0,
+        "liveAir": false,
+        "ptrStyle": "cross",
+        "ptrColor": "#028d02"
+    }
+}
