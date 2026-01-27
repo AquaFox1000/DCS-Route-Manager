@@ -1311,7 +1311,7 @@ class SettingsWindow(QWidget):
                     self.tab_clickable.chk_enable.blockSignals(False)
                 self.loading = False
         except Exception as e: 
-            print(f"Load Error: {e}")
+            print(f"[Overlay] Load Error: {e}")
 
     def apply_ui_settings(self, s):
         self.loading = True
@@ -1578,7 +1578,7 @@ class HUDOverlay(QMainWindow):
                     except: pass
             
         except Exception as e: 
-            print(f"Bind Error: {e}")
+            print(f"[Overlay] Bind Error: {e}")
 
 def run():
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"

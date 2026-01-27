@@ -68,7 +68,7 @@ class OverlayConfig:
                     config["test_ids"].update(data.get("test_ids", {}))
                     return config
             except Exception as e:
-                print(f"Error loading config: {e}")
+                print(f"[InputManager] Error loading config: {e}")
         return self.DEFAULT_CONFIG.copy()
 
     def save(self, config):
@@ -76,7 +76,7 @@ class OverlayConfig:
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=4)
         except Exception as e:
-            print(f"Error saving config: {e}")
+            print(f"[InputManager] Error saving config: {e}")
 
 
 # --- GLOBAL INPUT BINDER (Static Helper) ---
@@ -106,7 +106,7 @@ class InputBinder:
                 hook = mouse.on_button(safe_trigger, buttons=mouse_map[trigger], types=mouse.UP)
                 InputBinder._mouse_hooks.append(hook)
             except ImportError:
-                print("Mouse library error or missing.")
+                print("[InputManager] Mouse library error or missing.")
             return
 
         # 2. Handle Scroll Binds
@@ -155,7 +155,7 @@ class InputBinder:
                 InputBinder._mouse_hooks.append(hook_down)
                 InputBinder._mouse_hooks.append(hook_up)
             except Exception as e:
-                print(f"Mouse binding error: {e}")
+                print(f"[InputManager] Mouse binding error: {e}")
             return True
         return False
 
@@ -193,7 +193,7 @@ class InputBinder:
             
             return True
         except Exception as e:
-            print(f"Keyboard state bind error (maybe complex hotkey?): {e}")
+            print(f"[InputManager] Keyboard state bind error (maybe complex hotkey?): {e}")
             return False
 
     @staticmethod
@@ -243,14 +243,14 @@ class InputManager(QThread):
             try:
                 self.last_mouse_pos = mouse.get_position()
                 self.mouse_hook_ref = mouse.hook(self._mouse_callback)
-                print("Mouse Hook ENABLED")
+                print("[InputManager] Mouse Hook ENABLED")
             except Exception as e:
-                print(f"Mouse Hook Error: {e}")
+                print(f"[InputManager] Mouse Hook Error: {e}")
         elif not enable and self.mouse_hook_ref:
             try:
                 mouse.unhook(self.mouse_hook_ref)
                 self.mouse_hook_ref = None
-                print("Mouse Hook DISABLED")
+                print("[InputManager] Mouse Hook DISABLED")
             except: pass
 
     def reset_mouse_state(self):
@@ -328,18 +328,18 @@ class InputManager(QThread):
             pygame.joystick.init()
             self.scan_devices()
         except Exception as e:
-            print(f"Joystick Init Error: {e}")
+            print(f"[InputManager] Joystick Init Error: {e}")
 
     def scan_devices(self):
         self.joysticks = {}
         count = pygame.joystick.get_count()
-        print(f"Found {count} Joysticks/Controllers")
+        print(f"[InputManager] Found {count} Joysticks/Controllers")
         for i in range(count):
             try:
                 j = pygame.joystick.Joystick(i)
                 j.init()
                 self.joysticks[j.get_instance_id()] = j
-                print(f"   - {j.get_name()} (ID: {j.get_instance_id()})")
+                print(f"[InputManager]    - {j.get_name()} (ID: {j.get_instance_id()})")
             except: pass
 
     def run(self):
@@ -403,7 +403,7 @@ class InputManager(QThread):
 
                 time.sleep(0.01) # 100Hz poll
             except Exception as e:
-                print(f"Joy Loop Error: {e}")
+                print(f"[InputManager] Joy Loop Error: {e}")
                 time.sleep(1)
 
     def check_axes(self, dev_name, axis_idx, value):
@@ -451,7 +451,7 @@ class InputManager(QThread):
                 # POINTER ACTIONS
                 if action_name.startswith("pointer_"):
                     if action_name == "pointer_click":
-                        print(f"Click button: {'DOWN' if is_pressed else 'UP'}")
+                        print(f"[InputManager] Click button: {'DOWN' if is_pressed else 'UP'}")
                         self.pointer_button.emit("click", is_pressed)
                     elif action_name == "pointer_left":  self.digital_state["left"] = is_pressed
                     elif action_name == "pointer_right": self.digital_state["right"] = is_pressed
