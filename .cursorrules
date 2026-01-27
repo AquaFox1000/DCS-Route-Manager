@@ -1,0 +1,65 @@
+# AGENT BEHAVIOR PROTOCOLS
+
+## 1. SEQUENTIAL EXECUTION (STRICT)
+* **One Step Rule:** You are FORBIDDEN from executing a multi-step plan all at once.
+* **Gatekeeping:** After completing ONE task (even a sub-task), you must STOP and ask: "Task X complete. Proceed to Y?"
+* **No Auto-Pilot:** Do not assume approval. Do not chain commands. **You are in "Co-Pilot" mode, NOT "Auto-Pilot" mode**, unless explicitly told "Auto-run enabled" for a specific sequence.
+
+## 2. LARGE FILE HANDLING (CRITICAL)
+* **Context Awareness:** The project contains large files (>5000 lines).
+* **Read Before Write:** Before writing ANY code, you must scan the file for existing:
+    * Global variables (do not create duplicates like `alt` if `altitude` exists).
+    * Event Listeners (do not add a second `update` listener; hook into the existing one).
+* **Refactor vs. Create:** Prefer modifying existing functions over creating new helper functions.
+* **Verification:** If you propose a new variable, you must list 3 similar existing variables and justify why they cannot be used.
+
+## 3. SAFETY & RECOVERY
+* **Pre-Flight:** Run `npm run agent-save` immediately after user approval (or before major changes), BEFORE writing code.
+* **Emergency:** If the user indicates "Broken", "Error", or "Undo", immediately stop and run `npm run agent-undo`.
+* **Diary Updates**: Before running `npm run agent-save`, you MUST append a summary to `_DevOps/behavior/project_diary.md`.
+    *   **Format**: Use the format: `### [Date/Time] Task Name`.
+    *   **Tags**: You MUST include a line `**Tags**: #keyword1 #keyword2 ...` to make it searchable (e.g., `#ui`, `#fix`, `#map`, `#pointer`).
+*   **Diary Indexing**: `_DevOps/behavior/project_diary.md` is the source of truth for project history.
+
+## 4. QUALITY CONTROL & SELF-CORRECTION
+* **Self-Review:** Before implementing ANY code or returning a complex answer, you must perform a self-assessment:
+    *   *Fact Check:* Is this syntax correct for the specific Lua/JS version?
+    *   *Rethink:* Is there a simpler way? Am I breaking existing logic?
+    *   *Self-Assessment:* "I have reviewed this plan and identified risk X, which I mitigated by Y."
+* **Human Verification:** For any medium-to-large task, you MUST pause and request a **Human Test**.
+    *   Explicitly ask the user to verify the specific feature in-game.
+    *   Do not proceed until the user confirms "Test Passed".
+
+## 5. PERFORMANCE CONSTRAINTS (DCS WORLD)
+*   **Environment:** This runs inside a flight simulator (DCS World). Performance is PARAMOUNT.
+*   **Memory:* Eliminate memory leaks. Dereference unused objects.
+*   **Efficiency:** Avoid expensive loops in `Update()` functions. Use event-driven logic where possible.
+*   **Context:** Remember that Lua runs in a specific DCS environment (Export.lua, Hooks).
+
+## 6. COMMUNICATION STYLE
+* **Manager Mode:** Keep the "Agent Management Window" open.
+* **Concise:** Do not explain the code unless asked. State the action: "Index updated. Waiting for testing."
+
+## 7. WORKSPACE HYGIENE (STRICT)
+*   **Root Directory:** MUST ONLY contain:
+    *   Main App Entry Point (`RouteManager.py`)
+    *   Essential Config (`.cursorrules`, `.gitignore`)
+    *   App Data/Assets (`DATA/`, `static/`, `Templates/`, `modules/`)
+    *   DevOps root (`_DevOps/`)
+    *   Agent config (`.agent/`)
+*   **Zero Pollution:**
+    *   **Logs/Temps:** NEVER write `.log`, `.tmp`, or `.bak` files to root. Use `_DevOps/logs/` or `_DevOps/temp/`.
+    *   **Processes:** NEVER leave `RouteManager.py` running after verification.
+*   **No Clutter:**
+    *   **Tests:** MUST go in `tests/`.
+    *   **Helpers/Tools:** MUST go in `_DevOps/scripts/`.
+    *   **Artifacts:** `dist/`, `build/` MUST be deleted or ignored.
+    *   **Backups:** `.bak` files MUST be moved to `_DevOps/backups/` immediately.
+*   **DCS Sync:**
+    *   If `Scripts/` are modified, YOU MUST SYNC them to the User's Saved Games folder immediately (`c:\Users\pino4\Saved Games\DCS.openbeta\Scripts`).
+    *   User Complaint: "Original DCS /scripts folder is missing these files". ALWAYS CHECK SYNC.
+62: 
+63: ## 8. GITHUB PROTOCOL (STRICT)
+64: *   **Protocol:** Follow strict 2-branch separation (`main`=Source, `release`=Binaries).
+65: *   **Documentation:** REFERENCE `_DevOps/docs/GITHUB_PROTOCOL.md` for details.
+66: *   **Automation:** ALWAYS use `npm run git-main` or `npm run git-release`. NEVER push manually.
